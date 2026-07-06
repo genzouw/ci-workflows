@@ -18,10 +18,6 @@ on:
       - '.hadolint.yaml'
       - '.github/workflows/hadolint.yml'
 
-concurrency:
-  group: hadolint-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 

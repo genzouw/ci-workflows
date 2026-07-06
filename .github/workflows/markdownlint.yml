@@ -16,10 +16,6 @@ on:
       - '.markdownlint-cli2.jsonc'
       - '.github/workflows/markdownlint.yml'
 
-concurrency:
-  group: markdownlint-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 

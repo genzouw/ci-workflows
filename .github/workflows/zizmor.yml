@@ -8,10 +8,6 @@ on:
   pull_request:
     branches: ['**']
 
-concurrency:
-  group: zizmor-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 

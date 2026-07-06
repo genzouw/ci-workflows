@@ -11,10 +11,6 @@ on:
     # 毎週月曜 04:00 JST (= 日曜 19:00 UTC) に再スキャンして新規 CVE を拾う
     - cron: '0 19 * * 0'
 
-concurrency:
-  group: trivy-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   # チェックアウト・リポジトリ参照用
   contents: read

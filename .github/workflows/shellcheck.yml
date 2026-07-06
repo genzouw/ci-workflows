@@ -14,10 +14,6 @@ on:
       - '**/*.sh'
       - '.github/workflows/shellcheck.yml'
 
-concurrency:
-  group: shellcheck-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
