@@ -48,7 +48,8 @@ jobs:
 
 1. **job の `name` を変更しない。** 呼び出し側では `<スタブjob名> / <本体job名>`（例: `gitleaks / Scan for leaked secrets`）が check context になり、genzouw.com の Terraform（`terraform/environments/github/main.tf` の `common_required_checks`）が必須チェック名として参照している。変更する場合は Terraform と同時に更新すること
 2. `gitleaks` / `trivy` / `zizmor` には **paths フィルタを付けない**（必須チェックのため、context が報告されないPRが発生するとマージ不能になる）
-3. 破壊的変更（job 名変更・チェックの厳格化）はタグのメジャーバージョンを上げる
+3. **reusable workflow 側に workflow レベルの `concurrency` を定義しない。** 呼び出し元スタブと同一グループ名になると「Canceling since a deadlock was detected」で startup_failure する。concurrency はスタブ側でのみ定義する
+4. 破壊的変更（job 名変更・チェックの厳格化）はタグのメジャーバージョンを上げる
 
 ## リリース
 
