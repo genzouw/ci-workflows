@@ -111,4 +111,5 @@ Issue では「なぜ既存の無料サービスでは目的を達成できな�
 
 ## 7. 本ポリシーの適用範囲
 
-本ポリシーは [@genzouw](https://github.com/genzouw) が公開しているすべての公開リポジトリに共通で適用されます。
+本ポリシーは、本リポジトリ [`genzouw/ci-workflows`](https://github.com/genzouw/ci-workflows) に適用されます。
+[@genzouw](https://github.com/genzouw) が公開する他の公開リポジトリで同様の運用を行いたい場合は、当該リポジトリのルートに本ファイルを個別に配置してください（現時点で自動配布の仕組みはありません）。
