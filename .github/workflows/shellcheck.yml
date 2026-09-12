@@ -7,11 +7,13 @@ on:
     branches: [main, master]
     paths:
       - '**/*.sh'
+      - '.github/actions/**'
       - '.github/workflows/shellcheck.yml'
   pull_request:
     branches: [main, master]
     paths:
       - '**/*.sh'
+      - '.github/actions/**'
       - '.github/workflows/shellcheck.yml'
 
 permissions:
@@ -41,3 +43,120 @@ jobs:
           fi
           printf 'lint 対象: %s\n' "${scripts[@]}"
           shellcheck --severity=warning "${scripts[@]}"
+
+      - name: Run shellcheck on composite action `run:` blocks
+        # composite action (`action.yml`) の `run:` は独立した `.sh` ファイルではないため
+        # 上のステップの対象外になる。一方 actionlint は composite action を検証できない
+        # （`action.yml` を渡すと workflow スキーマとして誤解釈し `"jobs" section is
+        # missing` で落ちる）ため、この抽出処理が composite action 内スクリプトを
+        # lint する唯一の経路になる。
+        #
+        # 処理は `run:` 内にインラインで持つ。`workflow_call` で呼ばれた際に
+        # チェックアウトされるのは呼び出し元リポジトリであり、本リポジトリに置いた
+        # 補助スクリプトは存在しないため。
+        run: |
+          set -euo pipefail
+
+          # `git ls-files` の pathspec は `*` が `/` を跨いでマッチするため、
+          # `*/action.yml` で `.github/actions/<name>/action.yml` も拾える
+          # (free-policy.yml の走査対象と同じ書き方)。
+          # サードパーティ由来の vendor / node_modules 配下は上のステップと同様に除外する。
+          mapfile -t actions < <(
+            git ls-files -- 'action.yml' 'action.yaml' '*/action.yml' '*/action.yaml' \
+              | grep -viE '(^|/)(vendor|node_modules)/' || true
+          )
+          if [ "${#actions[@]}" -eq 0 ]; then
+            echo "composite action 定義が見つかりませんでした。スキップします。"
+            exit 0
+          fi
+
+          # 抽出には yq (mikefarah 版 v4) を使う。ubuntu-latest ランナーに同梱されているが、
+          # 将来イメージから外れたときに検証が黙ってスキップされるのを防ぐため、
+          # ここでバージョンを出力して不在なら即座に失敗させる。
+          yq --version
+
+          workdir="$(mktemp -d)"
+          mapping="$workdir/mapping.tsv"
+          schema_errors="$workdir/schema-errors.txt"
+          : >"$mapping"
+          : >"$schema_errors"
+
+          for action in "${actions[@]}"; do
+            [ "$(yq -r '.runs.using // ""' "$action")" = composite ] || continue
+
+            count="$(yq -r '.runs.steps | length' "$action")"
+            for i in $(seq 0 "$((count - 1))"); do
+              [ "$(yq -r ".runs.steps[$i] | has(\"run\")" "$action")" = true ] || continue
+
+              name="$(yq -r ".runs.steps[$i].name // \"steps[$i]\"" "$action")"
+              shell="$(yq -r ".runs.steps[$i].shell // \"\"" "$action")"
+              line="$(yq -r ".runs.steps[$i].run | line" "$action")"
+              style="$(yq -r ".runs.steps[$i].run | style" "$action")"
+
+              # composite action の `run:` ステップでは `shell:` が必須で、欠落すると
+              # 実行時に `Required property is missing: shell` でクラッシュする。
+              # actionlint が検証できない領域なのでここで落とす。
+              if [ -z "$shell" ]; then
+                printf '%s:%s: 「shell:」の指定がありません (composite action の run ステップでは必須)\n' \
+                  "$action" "$line" >>"$schema_errors"
+                continue
+              fi
+
+              # bash/sh 以外 (python / pwsh 等) を shellcheck に渡すと確実に構文エラーに
+              # なるため、ホワイトリスト方式で対象を限定する。
+              case "$shell" in
+                bash | sh) ;;
+                *)
+                  printf 'skip: %s :: %s (shell: %s は shellcheck の対象外)\n' "$action" "$name" "$shell"
+                  continue
+                  ;;
+              esac
+
+              # 一時ファイルの行番号を action.yml の行番号に揃えるため空行を前置する。
+              # ブロックスカラー (`|` / `>`) は `run:` キーの次の行から本文が始まる。
+              offset="$line"
+              case "$style" in
+                literal | folded) ;;
+                *) offset="$((line - 1))" ;;
+              esac
+
+              script="$workdir/$(printf '%s' "${action}__${i}" | tr -c 'A-Za-z0-9._-' '_')"
+              : >"$script"
+              for _ in $(seq 1 "$offset"); do printf '\n' >>"$script"; done
+
+              # GitHub Actions の式 (二重波括弧の補間) はシェルとして不正なので固定
+              # トークンへ置換する。式の内側を `[^}]*` で表すと、`format('{0}-{1}', a, b)`
+              # のように式の中に `}` を含む場合に取り残しが出て偽の構文エラーになるため、
+              # 単一の `}` を許すパターンにしている。
+              yq -r ".runs.steps[$i].run" "$action" \
+                | sed -E 's/\$\{\{([^}]|\}[^}])*\}\}/GITHUB_EXPRESSION/g' >>"$script"
+
+              printf '%s\t%s\t%s\t%s\n' "$script" "$action" "$shell" "$name" >>"$mapping"
+            done
+          done
+
+          status=0
+
+          if [ -s "$mapping" ]; then
+            while IFS=$'\t' read -r script action shell name; do
+              printf 'lint 対象: %s :: %s (shell: %s)\n' "$action" "$name" "$shell"
+              out=""
+              if ! out="$(shellcheck -s "$shell" --severity=warning --format=gcc "$script")"; then
+                status=1
+              fi
+              if [ -n "$out" ]; then
+                # 一時ファイルのパスを元の action.yml に置き換える (行番号は一致済み)。
+                printf '%s\n' "$out" | sed "s#^${script}#${action}#"
+              fi
+            done <"$mapping"
+          else
+            echo "shellcheck 対象の composite action の run ブロックはありませんでした。"
+          fi
+
+          if [ -s "$schema_errors" ]; then
+            echo "::error::composite action の定義に不備があります:"
+            cat "$schema_errors"
+            status=1
+          fi
+
+          exit "$status"
