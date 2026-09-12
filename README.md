@@ -13,6 +13,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `markdownlint.yml` | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`） | `markdownlint-cli2`              | `**/*.md`              |
 | `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）               | `Hadolint (Dockerfile lint)`     | `**/Dockerfile*`       |
 | `shellcheck.yml`   | シェルスクリプト lint（`.sh` が無ければスキップ）              | `ShellCheck (shell script lint)` | `**/*.sh`              |
+| `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）         | `Free-only policy check`         | なし（常時実行）       |
 
 ## 使い方（呼び出し側スタブ）
 
@@ -43,6 +44,43 @@ jobs:
 
 - 参照は **full-length commit SHA でピン留め**すること（actionlint が強制する）。更新は各リポジトリの Dependabot (`github-actions` ecosystem) が自動でPRを出す
 - トリガー・concurrency・permissions は**スタブ側**で定義する（本リポジトリの各ワークフローに付いている `push` / `pull_request` トリガーは本リポジトリ自身のセルフテスト用）
+
+## `free-policy.yml`（完全無料ポリシーチェック）
+
+各リポジトリの `AGENTS.md` 1 章「公開 OSS で完全無料の SaaS・AI・ツールのみを利用する」のうち、**構文的に判定できる違反パターンのみ**を検出する。
+
+### 検出するもの
+
+| #   | 検出内容                                                                                 | 根拠                                        |
+| --- | ---------------------------------------------------------------------------------------- | ------------------------------------------- |
+| 1   | `GITHUB_TOKEN` 以外の `secrets.*` 参照、および `secrets: inherit`                        | 従量課金 API キーの Secrets 登録は MUST NOT |
+| 2   | 従量課金 API キーを示す変数名（`*_API_KEY` / `*_API_TOKEN` / プロバイダ名付きの鍵・URL） | 同上（`vars.*` や平文での指定も検出する）   |
+| 3   | 課金可能な LLM / 検索 API のエンドポイントホスト名                                       | OpenAI 互換エンドポイント経由も MUST NOT    |
+
+キー名のブラックリスト維持を避けるため、1 は**ホワイトリスト方式**（`GITHUB_TOKEN` 以外はすべて違反）を採る。
+
+走査対象は `.github/` 配下の YAML と composite action 定義（`action.yml` / `action.yaml`）のみ。ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの組み込み」であり、`AGENTS.md` や README がポリシー解説として鍵名を列挙しているのを誤検知しないための限定である。
+
+### 検出しないもの（レビュー運用でカバー）
+
+- 有料プラン / 有料トライアル / クレジットカード登録を要する SaaS の導入
+- リポジトリオーナーへの新規 Secret 発行依頼
+- そのサービスが「無料枠」型かどうかの判定
+
+いずれも意味的な判断が必要で、CI では誤検知・見逃しの両方が避けられないため実装しない。なお **Action の SHA ピン留め強制は `actionlint.yml` と `zizmor` が既にカバー**しているため、本ワークフローでは重複して実装していない。
+
+### 段階導入と例外
+
+- `enforce`（boolean、既定 `true`）を `false` にすると、違反を検出しても job は成功し `::warning::` のみを出す。新規導入時は `false` で誤検知を観察し、問題がなければ `true`（既定）へ切り替える
+- 正当な例外は、対象行に `free-policy: allow <理由>` を含むコメントを書くことで除外する。別ファイルの allowlist ではなく行内マーカー方式にしているのは、例外の追加が必ず差分レビューに現れるようにするため
+
+```yaml
+jobs:
+  free-policy:
+    uses: genzouw/ci-workflows/.github/workflows/free-policy.yml@<full-commit-SHA> # vX.Y.Z
+    with:
+      enforce: false # 誤検知観察中。観察後に削除して既定の true に戻す
+```
 
 ## 運用契約（重要）
 

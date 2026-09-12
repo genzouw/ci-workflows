@@ -1,0 +1,160 @@
+name: free-policy
+
+# AGENTS.md 1 章「公開 OSS で完全無料の SaaS・AI・ツールのみを利用する」のうち、
+# 機械的に判定できる違反パターンを CI で検出する。
+#
+# 検出するもの (構文的に判定可能):
+#   1. GITHUB_TOKEN 以外の `secrets.*` 参照 / `secrets: inherit` (ゼロ Secrets 原則)
+#   2. 従量課金 API キーを示す環境変数名 (`*_API_KEY` 等・プロバイダ名付きの鍵/URL)
+#   3. 課金可能な LLM / 検索 API のエンドポイントホスト名
+#
+# 検出しないもの (意味的判断が必要なためレビュー運用でカバー):
+#   - 有料プラン / 有料トライアルを要する SaaS の導入
+#   - オーナーへの新規 Secret 発行依頼
+#   - 「無料枠」型サービスかどうかの判定
+#
+# SHA ピン留めの強制は actionlint.yml と zizmor で既にカバーしているため、
+# 重複を避けて本ワークフローでは扱わない。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  workflow_call:
+    inputs:
+      enforce:
+        description: "違反検出時にジョブを失敗させるか。false なら警告のみ (段階導入・誤検知観察用)。"
+        type: boolean
+        required: false
+        default: true
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  free-policy:
+    name: Free-only policy check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan CI definitions for free-only policy violations
+        env:
+          # workflow_call 以外のイベント (本リポジトリのセルフテスト) では
+          # inputs が存在せず空文字になるため、既定は「enforce する」に倒す。
+          ENFORCE: ${{ inputs.enforce }}
+        run: |
+          set -euo pipefail
+
+          # --- 走査対象 -------------------------------------------------
+          # 本ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの
+          # 組み込み」であるため、対象は .github 配下の YAML と composite
+          # action 定義に限定する。README や AGENTS.md がポリシー解説として
+          # 鍵名を列挙しているのを誤検知しないための意図的な限定。
+          #
+          # 本ワークフロー自身は検出パターンの定義そのものを含むため除外する
+          # (self-match 回避)。呼び出し側の同名ファイルは uses: だけの薄い
+          # スタブなので、除外しても検出漏れにはならない。
+          mapfile -t targets < <(
+            git ls-files -- \
+              '.github/*.yml' '.github/*.yaml' \
+              'action.yml' 'action.yaml' '*/action.yml' '*/action.yaml' \
+              | grep -vx '.github/workflows/free-policy.yml' || true
+          )
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "走査対象の CI 定義ファイルが見つかりませんでした。スキップします。"
+            exit 0
+          fi
+          printf '走査対象: %s\n' "${targets[@]}"
+          echo ""
+
+          # 正当な例外は、対象行に `free-policy: allow <理由>` を含むコメントを
+          # 書くことで除外できる (差分レビューで必ず可視化されるようにするため、
+          # 別ファイルの allowlist ではなく行内マーカー方式を採る)。
+          cat > /tmp/allowed-secrets.awk <<'AWK'
+          # 許可された secrets 参照 (GITHUB_TOKEN のみ) を取り除いてもなお
+          # secrets 参照が残る行だけを違反として出力する。
+          {
+            rest = $0
+            gsub(/secrets\.GITHUB_TOKEN/, "", rest)
+            gsub(/secrets\[[[:space:]]*["']GITHUB_TOKEN["'][[:space:]]*\]/, "", rest)
+            if (rest ~ /secrets\./ || rest ~ /secrets\[/) {
+              print
+            }
+          }
+          AWK
+
+          findings="$(mktemp)"
+
+          add_finding() {
+            if [ -n "$2" ]; then
+              printf '■ %s\n%s\n\n' "$1" "$2" >> "$findings"
+            fi
+          }
+
+          # --- 1. secrets ホワイトリスト (GITHUB_TOKEN 以外は禁止) --------
+          hits="$(
+            grep -HnEI -e 'secrets[.][A-Za-z_]' -e 'secrets\[' -- "${targets[@]}" \
+              | grep -v 'free-policy: allow' \
+              | awk -f /tmp/allowed-secrets.awk || true
+          )"
+          add_finding 'GITHUB_TOKEN 以外の secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
+
+          hits="$(
+            grep -HnEI -e "^[[:space:]]*-?[[:space:]]*[\"']?secrets[\"']?[[:space:]]*:[[:space:]]*inherit" -- "${targets[@]}" \
+              | grep -v 'free-policy: allow' || true
+          )"
+          add_finding 'secrets: inherit (全 Secrets を無条件に転送するため禁止)' "$hits"
+
+          # --- 2. 従量課金 API キーを示す変数名 ---------------------------
+          # 汎用パターン (未知のプロバイダも捕捉する) とプロバイダ名付きパターンの併用。
+          key_pattern='[A-Z][A-Z0-9]*(_[A-Z0-9]+)*_(API_KEY|API_TOKEN|SECRET_KEY)'
+          provider_pattern='(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_GENERATIVE_AI|VERTEX_AI|AZURE_OPENAI|MISTRAL|COHERE|GROQ|DEEPSEEK|PERPLEXITY|XAI|TOGETHER|OPENROUTER|HUGGINGFACE|HF|REPLICATE|TAVILY|EXA|SERPAPI|BRAVE|FIRECRAWL)_[A-Z0-9_]*(KEY|TOKEN|URL|ENDPOINT)'
+          hits="$(
+            grep -HnEI -e "$key_pattern" -e "$provider_pattern" -- "${targets[@]}" \
+              | grep -v 'free-policy: allow' || true
+          )"
+          add_finding '従量課金 API キーを示す変数名 (AGENTS.md 1.1)' "$hits"
+
+          # --- 3. 課金可能な API エンドポイント ---------------------------
+          host_pattern='(api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|api\.deepseek\.com|api\.mistral\.ai|api\.cohere\.(ai|com)|api\.groq\.com|api\.perplexity\.ai|api\.x\.ai|api\.together\.(xyz|ai)|openrouter\.ai|api\.tavily\.com|api\.exa\.ai|serpapi\.com|api\.search\.brave\.com|api\.firecrawl\.dev|api\.replicate\.com|(api-inference|router)\.huggingface\.co)'
+          hits="$(
+            grep -HnEI -e "$host_pattern" -- "${targets[@]}" \
+              | grep -v 'free-policy: allow' || true
+          )"
+          add_finding '課金可能な API エンドポイントへの接続先 (AGENTS.md 1.1: OpenAI 互換エンドポイント経由も MUST NOT)' "$hits"
+
+          # --- 判定 -------------------------------------------------------
+          if [ ! -s "$findings" ]; then
+            echo "✅ 完全無料ポリシーに違反する CI 設定は検出されませんでした。"
+            exit 0
+          fi
+
+          cat "$findings"
+          {
+            echo "## 完全無料ポリシー違反の疑い"
+            echo ""
+            echo '```'
+            cat "$findings"
+            echo '```'
+            echo ""
+            echo "判断基準は対象リポジトリの AGENTS.md 1 章を参照してください。"
+            echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けることで除外できます。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo ""
+          echo "対応方法:"
+          echo "  - 従量課金 API キー / 課金可能エンドポイントへの依存を取り除く (AGENTS.md 1 章)"
+          echo "  - 正当な例外の場合は該当行に \`free-policy: allow <理由>\` のコメントを付ける"
+
+          if [ "${ENFORCE:-true}" = "false" ]; then
+            echo "::warning::完全無料ポリシー違反の疑いを検出しました (enforce: false のため警告のみ)。"
+            exit 0
+          fi
+          echo "::error::完全無料ポリシー違反の疑いを検出しました。"
+          exit 1
