@@ -9,7 +9,7 @@ on:
     branches: [main, master]
   schedule:
     # 毎週月曜 05:00 JST (= 日曜 20:00 UTC) に履歴全体を再スキャン
-    - cron: '0 20 * * 0'
+    - cron: "0 20 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -28,16 +28,13 @@ jobs:
           persist-credentials: false
 
       - name: Install gitleaks
-        run: |
-          set -euo pipefail
-          GITLEAKS_VERSION=8.21.2
-          TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${TARBALL}"
-          curl -fsSLo checksums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          grep " ${TARBALL}$" checksums.txt | sha256sum -c -
-          tar -xzf "${TARBALL}" gitleaks
-          sudo mv gitleaks /usr/local/bin/gitleaks
-          gitleaks version
+        # workflow_call で他リポジトリから呼ばれた場合、$GITHUB_WORKSPACE には
+        # 呼び出し元リポジトリが展開されるため、相対パス (./.github/actions/...)
+        # では本リポジトリの composite action を解決できない。自リポジトリ参照でも
+        # 絶対パス + full-commit-SHA が必要 (README「提供 composite action」参照)。
+        # SHA は本リポジトリに action.yml を追加したコミットを指しており、
+        # action.yml を変更する際は同じ PR 内でこの SHA も更新すること。
+        uses: genzouw/ci-workflows/.github/actions/setup-gitleaks@5e15aa64dd624470219ee46aee1cf86d108d81a9 # v1.1.0 予定 (マージ後にタグ付け)
 
       - name: Run gitleaks
         run: |
