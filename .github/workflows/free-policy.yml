@@ -57,14 +57,15 @@ jobs:
           # action 定義に限定する。README や AGENTS.md がポリシー解説として
           # 鍵名を列挙しているのを誤検知しないための意図的な限定。
           #
-          # 本ワークフロー自身は検出パターンの定義そのものを含むため除外する
-          # (self-match 回避)。呼び出し側の同名ファイルは uses: だけの薄い
-          # スタブなので、除外しても検出漏れにはならない。
+          # 本ワークフロー自身も走査対象に含める。検出パターンの定義を含む
+          # ファイルをパスで除外すると、呼び出し側リポジトリの同名スタブも
+          # 除外されて盲点になるため、self-match は検出パターン側で回避する
+          # (`secret[s]` のように文字クラスへ分解する。actionlint.yml の
+          # `u[s]es` / `pull_request_targ[e]t` と同じ手法)。
           mapfile -t targets < <(
             git ls-files -- \
               '.github/*.yml' '.github/*.yaml' \
-              'action.yml' 'action.yaml' '*/action.yml' '*/action.yaml' \
-              | grep -vx '.github/workflows/free-policy.yml' || true
+              'action.yml' 'action.yaml' '*/action.yml' '*/action.yaml' || true
           )
           if [ "${#targets[@]}" -eq 0 ]; then
             echo "走査対象の CI 定義ファイルが見つかりませんでした。スキップします。"
@@ -76,7 +77,7 @@ jobs:
           # 正当な例外は、対象行に `free-policy: allow <理由>` を含むコメントを
           # 書くことで除外できる (差分レビューで必ず可視化されるようにするため、
           # 別ファイルの allowlist ではなく行内マーカー方式を採る)。
-          cat > /tmp/allowed-secrets.awk <<'AWK'
+          cat > /tmp/allowed-token.awk <<'AWK'
           # 許可された secrets 参照 (GITHUB_TOKEN のみ) を取り除いてもなお
           # secrets 参照が残る行だけを違反として出力する。
           {
@@ -99,14 +100,14 @@ jobs:
 
           # --- 1. secrets ホワイトリスト (GITHUB_TOKEN 以外は禁止) --------
           hits="$(
-            grep -HnEI -e 'secrets[.][A-Za-z_]' -e 'secrets\[' -- "${targets[@]}" \
+            grep -HnEI -e 'secret[s][.][A-Za-z_]' -e 'secret[s]\[' -- "${targets[@]}" \
               | grep -v 'free-policy: allow' \
-              | awk -f /tmp/allowed-secrets.awk || true
+              | awk -f /tmp/allowed-token.awk || true
           )"
           add_finding 'GITHUB_TOKEN 以外の secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
           hits="$(
-            grep -HnEI -e "^[[:space:]]*-?[[:space:]]*[\"']?secrets[\"']?[[:space:]]*:[[:space:]]*inherit" -- "${targets[@]}" \
+            grep -HnEI -e "^[[:space:]]*-?[[:space:]]*[\"']?secret[s][\"']?[[:space:]]*:[[:space:]]*inherit" -- "${targets[@]}" \
               | grep -v 'free-policy: allow' || true
           )"
           add_finding 'secrets: inherit (全 Secrets を無条件に転送するため禁止)' "$hits"
