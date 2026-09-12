@@ -1,0 +1,59 @@
+name: 'Setup gitleaks'
+description: 'gitleaks の公式リリースバイナリをチェックサム検証つきでインストールし、PATH に配置する'
+
+# gitleaks のバージョンは、このリポジトリの reusable workflow (.github/workflows/gitleaks.yml) と
+# 各リポジトリ側の個別ワークフロー (例: genzouw/toique の .github/workflows/pr-secret-review.yml) の
+# 両方で必要になる。それぞれの `run:` ブロックに GITLEAKS_VERSION を書くと Dependabot の
+# 更新対象外 (run ブロック内の文字列) となり、片方だけ古いまま放置されても誰も気づけない。
+# gitleaks はマイナー版でルール追加やパーサ修正が入るため、版がずれると「片方は検知し、
+# 片方は見逃す」状態が静かに続く (genzouw/toique#718)。
+#
+# そこでインストール手順とバージョンの既定値をこの composite action に集約し、
+# 利用側は `uses: genzouw/ci-workflows/.github/actions/setup-gitleaks@<sha>` で参照する。
+# SHA 参照は Dependabot (github-actions ecosystem) の更新対象に載るため、
+# バージョン同期が「手で揃える運用」ではなく構造で保証される。
+inputs:
+  version:
+    description: 'インストールする gitleaks のバージョン (先頭の v は付けない)。省略時は単一の信頼できる情報源としてここで定義された既定値を使う'
+    required: false
+    default: '8.30.1'
+
+runs:
+  using: composite
+  steps:
+    # 作業ディレクトリを $RUNNER_TEMP にしているのは、利用側が
+    # `gitleaks detect --no-git` (作業ツリー上の未追跡ファイルまで走査するモード) で
+    # スキャンする場合に、tarball や checksums.txt 自体がスキャン対象に入るのを避けるため。
+    - name: Install gitleaks
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        GITLEAKS_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        # 公式リリースのアセット名は gitleaks_<version>_<os>_<arch>.tar.gz。
+        # x64 前提で決め打ちすると arm64 runner (public リポジトリでは無料で利用可能) に
+        # 移した瞬間に「ダウンロードは成功するが実行できない」形で壊れるため、
+        # uname から解決し、未知のアーキテクチャでは黙って進まず即座に失敗させる。
+        case "$(uname -m)" in
+          x86_64) ARCH=x64 ;;
+          aarch64 | arm64) ARCH=arm64 ;;
+          *) echo "::error::Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+
+        TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_${ARCH}.tar.gz"
+        BASE_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+
+        curl -fsSLO "${BASE_URL}/${TARBALL}"
+        curl -fsSLo checksums.txt "${BASE_URL}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+
+        # grep がヒット 0 件で exit 1 になるため、アセット名が変わった場合もここで失敗する
+        # (検証を素通りして未検証のバイナリを実行することはない)。
+        grep " ${TARBALL}$" checksums.txt | sha256sum -c -
+
+        tar -xzf "${TARBALL}" gitleaks
+        sudo mv gitleaks /usr/local/bin/gitleaks
+        rm -f "${TARBALL}" checksums.txt
+
+        gitleaks version
