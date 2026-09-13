@@ -9,10 +9,10 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `gitleaks.yml`     | シークレット漏洩スキャン（全ブランチ履歴）                     | `Scan for leaked secrets`        | なし（常時実行）       |
 | `trivy.yml`        | 脆弱性・設定ミス・シークレットの fs スキャン                   | `Trivy filesystem scan`          | なし（常時実行）       |
 | `zizmor.yml`       | GitHub Actions ワークフローのセキュリティ監査                  | `zizmor`                         | なし（常時実行）       |
-| `actionlint.yml`   | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止 | `actionlint`                     | `.github/workflows/**` |
+| `actionlint.yml`   | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止 | `actionlint`                     | `.github/workflows/**`, `.github/actions/**` |
 | `markdownlint.yml` | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`） | `markdownlint-cli2`              | `**/*.md`              |
 | `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）               | `Hadolint (Dockerfile lint)`     | `**/Dockerfile*`       |
-| `shellcheck.yml`   | シェルスクリプト lint（`.sh` が無ければスキップ）              | `ShellCheck (shell script lint)` | `**/*.sh`              |
+| `shellcheck.yml`   | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)` | `**/*.sh`, `.github/actions/**` |
 | `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）         | `Free-only policy check`         | なし（常時実行）       |
 
 ## 提供 composite action
@@ -36,6 +36,35 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 
 - バージョンを一時的に固定したい場合のみ `with: { version: '8.30.1' }` で上書きする。通常は指定しない
 - 参照は reusable workflow と同じく **full-length commit SHA でピン留め**すること。更新は Dependabot (`github-actions` ecosystem) が自動でPRを出す
+
+## composite action（`.github/actions/**`）の検証範囲
+
+composite action は `.github/workflows/**` の外にあるため、ワークフロー向けの lint がそのままでは届かない。本リポジトリでは以下の形で穴を埋めている。
+
+| 検証内容                        | 担当                                                            | 備考                                                                                         |
+| ------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `uses:` の SHA ピン留め強制     | `actionlint.yml`「Reject non-SHA action references in `uses:`」  | 走査対象は `.github/workflows` と `.github/actions`（後者はディレクトリが存在する場合のみ）   |
+| `run:` ブロックの shell lint    | `shellcheck.yml`「Run shellcheck on composite action `run:` blocks」 | `run:` を抽出し、GitHub Actions の式を固定トークンへ置換して `shellcheck` に渡す              |
+| `run:` ステップの `shell:` 必須 | 同上                                                            | composite action では `shell:` が必須で、欠落すると実行時にクラッシュするため lint 時に落とす |
+| セキュリティ監査                | `zizmor.yml`                                                     | リポジトリ全体を走査するが `continue-on-error: true` のためビルドは落とさない（SARIF 報告のみ） |
+| 完全無料ポリシー                | `free-policy.yml`                                                | 走査対象に `action.yml` / `action.yaml` を含む                                                |
+
+`actionlint` 本体は composite action のスキーマを検証できない（`action.yml` を渡すと workflow スキーマとして解釈し `"jobs" section is missing` で失敗する）。そのため composite action の YAML スキーマ全体の検証は未カバーであり、上表のとおり `shell:` 必須の 1 点のみを個別に検証している。
+
+`run:` からの抽出時に付与する行番号は元の `action.yml` の行番号と一致するため、報告された位置をそのまま該当行として読める。`shell: python` / `pwsh` などのステップは shellcheck の対象から除外される。
+
+### 呼び出し側スタブの `paths` について
+
+reusable workflow 側の `push` / `pull_request` の `paths` は**本リポジトリのセルフテスト用**であり、呼び出し側には効かない。composite action を持つリポジトリでは、スタブ側の `paths` にも `.github/actions/**` を追加すること（追加しないと composite action だけを変更したコミットで lint が起動しない）。
+
+```yaml
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '**/*.sh'
+      - '.github/actions/**'
+```
 
 ## 使い方（呼び出し側スタブ）
 
