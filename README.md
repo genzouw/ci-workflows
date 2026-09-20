@@ -14,7 +14,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）                                  | `Hadolint (Dockerfile lint)`         | `**/Dockerfile*`                                              |
 | `shellcheck.yml`   | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)`     | `**/*.sh`, `.github/actions/**`                               |
 | `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）                            | `Free-only policy check`             | なし（常時実行）                                              |
-| `pinact.yml`       | Action 参照のアノテーション整合 + リリース経過日数（cooldown）                    | `pinact (action pin verification)`   | `.github/workflows/**`, `.github/actions/**`, `.pinact.ya?ml` |
+| `pinact.yml`       | Action 参照のアノテーション整合 + リリース経過日数（cooldown）                    | `pinact (action pin verification)`   | `.github/workflows/**`, `.github/actions/**`, `.pinact.yaml`, `.pinact.yml`, `.github/pinact.yaml`, `.github/pinact.yml` |
 | `typos.yml`        | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                | なし（常時実行）                                              |
 | `semantic-pr.yml`  | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)` | なし（`pull_request` のみ）                                   |
 | `lychee.yml`       | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`         | `**/*.md`, `**/*.html`, `lychee.toml`                         |
