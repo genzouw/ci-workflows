@@ -4,23 +4,24 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 
 ## 提供ワークフロー
 
-| ワークフロー       | 内容                                                           | job 名 (= check context)         | paths フィルタ推奨     |
-| ------------------ | -------------------------------------------------------------- | -------------------------------- | ---------------------- |
-| `gitleaks.yml`     | シークレット漏洩スキャン（全ブランチ履歴）                     | `Scan for leaked secrets`        | なし（常時実行）       |
-| `trivy.yml`        | 脆弱性・設定ミス・シークレットの fs スキャン                   | `Trivy filesystem scan`          | なし（常時実行）       |
-| `zizmor.yml`       | GitHub Actions ワークフローのセキュリティ監査                  | `zizmor`                         | なし（常時実行）       |
-| `actionlint.yml`   | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止 | `actionlint`                     | `.github/workflows/**`, `.github/actions/**` |
-| `markdownlint.yml` | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`） | `markdownlint-cli2`              | `**/*.md`              |
-| `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）               | `Hadolint (Dockerfile lint)`     | `**/Dockerfile*`       |
-| `shellcheck.yml`   | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)` | `**/*.sh`, `.github/actions/**` |
-| `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）         | `Free-only policy check`         | なし（常時実行）       |
-| `pinact.yml`       | Action 参照のアノテーション整合 + リリース経過日数（cooldown） | `pinact (action pin verification)` | `.github/workflows/**`, `.github/actions/**`, `.pinact.ya?ml` |
+| ワークフロー       | 内容                                                                              | job 名 (= check context)           | paths フィルタ推奨                                            |
+| ------------------ | --------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------- |
+| `gitleaks.yml`     | シークレット漏洩スキャン（全ブランチ履歴）                                        | `Scan for leaked secrets`          | なし（常時実行）                                              |
+| `trivy.yml`        | 脆弱性・設定ミス・シークレットの fs スキャン                                      | `Trivy filesystem scan`            | なし（常時実行）                                              |
+| `zizmor.yml`       | GitHub Actions ワークフローのセキュリティ監査                                     | `zizmor`                           | なし（常時実行）                                              |
+| `actionlint.yml`   | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止                    | `actionlint`                       | `.github/workflows/**`, `.github/actions/**`                  |
+| `markdownlint.yml` | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`）                    | `markdownlint-cli2`                | `**/*.md`                                                     |
+| `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）                                  | `Hadolint (Dockerfile lint)`       | `**/Dockerfile*`                                              |
+| `shellcheck.yml`   | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)`   | `**/*.sh`, `.github/actions/**`                               |
+| `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）                            | `Free-only policy check`           | なし（常時実行）                                              |
+| `pinact.yml`       | Action 参照のアノテーション整合 + リリース経過日数（cooldown）                    | `pinact (action pin verification)` | `.github/workflows/**`, `.github/actions/**`, `.pinact.ya?ml` |
+| `lychee.yml`       | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`       | `**/*.md`, `**/*.html`, `lychee.toml`                         |
 
 ## 提供 composite action
 
-| action                            | 内容                                                                     |
-| --------------------------------- | ------------------------------------------------------------------------ |
-| `.github/actions/setup-gitleaks`  | gitleaks 公式リリースバイナリのチェックサム検証つきインストール（既定 `8.30.1`） |
+| action                           | 内容                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------- |
+| `.github/actions/setup-gitleaks` | gitleaks 公式リリースバイナリのチェックサム検証つきインストール（既定 `8.30.1`） |
 
 `gitleaks` のバージョンはこの action の `inputs.version` の既定値を単一の信頼できる情報源 (Single Source of Truth) とする。
 `gitleaks.yml` (本リポジトリの reusable workflow) と、呼び出し側リポジトリが独自に持つ gitleaks 実行ワークフローの
@@ -42,13 +43,13 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 
 composite action は `.github/workflows/**` の外にあるため、ワークフロー向けの lint がそのままでは届かない。本リポジトリでは以下の形で穴を埋めている。
 
-| 検証内容                        | 担当                                                            | 備考                                                                                         |
-| ------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `uses:` の SHA ピン留め強制     | `actionlint.yml`「Reject non-SHA action references in `uses:`」  | 走査対象は `.github/workflows` と `.github/actions`（後者はディレクトリが存在する場合のみ）   |
-| `run:` ブロックの shell lint    | `shellcheck.yml`「Run shellcheck on composite action `run:` blocks」 | `run:` を抽出し、GitHub Actions の式を固定トークンへ置換して `shellcheck` に渡す              |
-| `run:` ステップの `shell:` 必須 | 同上                                                            | composite action では `shell:` が必須で、欠落すると実行時にクラッシュするため lint 時に落とす |
-| セキュリティ監査                | `zizmor.yml`                                                     | リポジトリ全体を走査するが `continue-on-error: true` のためビルドは落とさない（SARIF 報告のみ） |
-| 完全無料ポリシー                | `free-policy.yml`                                                | 走査対象に `action.yml` / `action.yaml` を含む                                                |
+| 検証内容                        | 担当                                                                 | 備考                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `uses:` の SHA ピン留め強制     | `actionlint.yml`「Reject non-SHA action references in `uses:`」      | 走査対象は `.github/workflows` と `.github/actions`（後者はディレクトリが存在する場合のみ）     |
+| `run:` ブロックの shell lint    | `shellcheck.yml`「Run shellcheck on composite action `run:` blocks」 | `run:` を抽出し、GitHub Actions の式を固定トークンへ置換して `shellcheck` に渡す                |
+| `run:` ステップの `shell:` 必須 | 同上                                                                 | composite action では `shell:` が必須で、欠落すると実行時にクラッシュするため lint 時に落とす   |
+| セキュリティ監査                | `zizmor.yml`                                                         | リポジトリ全体を走査するが `continue-on-error: true` のためビルドは落とさない（SARIF 報告のみ） |
+| 完全無料ポリシー                | `free-policy.yml`                                                    | 走査対象に `action.yml` / `action.yaml` を含む                                                  |
 
 `actionlint` 本体は composite action のスキーマを検証できない（`action.yml` を渡すと workflow スキーマとして解釈し `"jobs" section is missing` で失敗する）。そのため composite action の YAML スキーマ全体の検証は未カバーであり、上表のとおり `shell:` 必須の 1 点のみを個別に検証している。
 
@@ -78,7 +79,7 @@ on:
   pull_request:
     branches: [main, master]
   schedule:
-    - cron: "0 20 * * 0"
+    - cron: '0 20 * * 0'
   workflow_dispatch:
 
 concurrency:
@@ -102,18 +103,18 @@ jobs:
 `actionlint.yml` の「Reject non-SHA action references」は `uses:` が 40 桁 SHA であることしか見ない。
 SHA ピン留めを通過したあとに残る次の 2 つの穴を、`pinact.yml` が GitHub API 経由で塞ぐ。
 
-| 穴 | 具体例 | `pinact.yml` の検査 |
-| --- | --- | --- |
+| 穴                 | 具体例                                                                | `pinact.yml` の検査                                            |
+| ------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------- |
 | アノテーション詐称 | `@<悪意のある SHA> # v1.2.3` と書けば、レビューでは `v1.2.3` に見える | `--verify`: コメントのタグが指す SHA と実際の pin が一致するか |
-| 取り込みが早すぎる | 上流が侵害された直後のリリースを SHA 固定で取り込む | `--min-age`: pin した commit が指定日数より古いか |
+| 取り込みが早すぎる | 上流が侵害された直後のリリースを SHA 固定で取り込む                   | `--min-age`: pin した commit が指定日数より古いか              |
 
 ### `actionlint.yml` との役割分担（重複ではない）
 
-| | `actionlint.yml` の grep | `pinact.yml` |
-| --- | --- | --- |
-| 検査対象 | `uses:` の**書式**（40 桁 SHA か） | pin の**中身**（タグとの一致・経過日数） |
-| ネットワーク | 不要 | GitHub API を使う（`GITHUB_TOKEN` はレート制限回避の読み取りのみ） |
-| 位置づけ | API 制限や障害時も効き続ける即時ゲート | 書式ゲートを通ったものに対する追加検査 |
+|              | `actionlint.yml` の grep               | `pinact.yml`                                                       |
+| ------------ | -------------------------------------- | ------------------------------------------------------------------ |
+| 検査対象     | `uses:` の**書式**（40 桁 SHA か）     | pin の**中身**（タグとの一致・経過日数）                           |
+| ネットワーク | 不要                                   | GitHub API を使う（`GITHUB_TOKEN` はレート制限回避の読み取りのみ） |
+| 位置づけ     | API 制限や障害時も効き続ける即時ゲート | 書式ゲートを通ったものに対する追加検査                             |
 
 `pinact` は実行時に書式チェックも同時に行うが、それは副産物であり、本ワークフローを追加する目的は上表の 2 行である。
 
@@ -128,9 +129,9 @@ SHA ピン留めを通過したあとに残る次の 2 つの穴を、`pinact.ym
 ```yaml
 # .github/dependabot.yml
 updates:
-  - package-ecosystem: "github-actions"
+  - package-ecosystem: 'github-actions'
     cooldown:
-      default-days: 7   # .pinact.yaml の min_age.value と揃える
+      default-days: 7 # .pinact.yaml の min_age.value と揃える
 ```
 
 > [!NOTE]
@@ -140,11 +141,63 @@ updates:
 
 ### 終了コード
 
-| コード | 意味 | 対処 |
-| --- | --- | --- |
-| 1 | SHA でピン留めされていない | `pinact run` で SHA へ置換する |
-| 2 | 自動修正不可（アノテーションと SHA の不一致、または cooldown 未経過） | アノテーション不一致なら `pinact run` でコメントを実際の SHA に合わせる。cooldown 未経過なら指定日数が経過してから取り込む |
-| 3 | GitHub API エラー・CLI フラグの不正な組み合わせなど、pinact 自体の予期しない失敗 | ワークフローのログを確認し、pinact 自体の実行エラーに対処する |
+| コード | 意味                                                                             | 対処                                                                                                                       |
+| ------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 1      | SHA でピン留めされていない                                                       | `pinact run` で SHA へ置換する                                                                                             |
+| 2      | 自動修正不可（アノテーションと SHA の不一致、または cooldown 未経過）            | アノテーション不一致なら `pinact run` でコメントを実際の SHA に合わせる。cooldown 未経過なら指定日数が経過してから取り込む |
+| 3      | GitHub API エラー・CLI フラグの不正な組み合わせなど、pinact 自体の予期しない失敗 | ワークフローのログを確認し、pinact 自体の実行エラーに対処する                                                              |
+
+## `lychee.yml`（リンク切れ検出）
+
+`markdownlint.yml` は Markdown の**構造**しか見ないため、リンクの書式が正しければ
+参照先が消えていても通過する。外部サービスの終了やリポジトリのリネームで URL が
+静かに死ぬのは、ドキュメント中心の公開リポジトリで実際に起きている。
+
+| 検査               | リンクの書式                | リンク先の生死 |
+| ------------------ | --------------------------- | -------------- |
+| `markdownlint.yml` | 見る（MD034 bare URL など） | 見ない         |
+| `lychee.yml`       | 見ない                      | **見る**       |
+
+### 公式 Action を使わない理由
+
+本リポジトリの Actions 設定は `allowed_actions: selected`（許可リスト方式）で、
+`lycheeverse` は許可リストに含まれていない。`uses: lycheeverse/lychee-action@<SHA>` は
+ジョブの失敗ではなく **`startup_failure`** になり、チェック自体が出現しない。
+
+そのため公式 Action ではなく、リリースバイナリを **公式 `.sha256` で検証**してから導入する
+（`actionlint.yml` / `trivy.yml` と同じ方式）。許可リストの変更を依頼せずに導入できる。
+
+### 不安定さへの対処
+
+外部ホストへ HTTP を出すため、他のワークフローより不安定になりやすい。既定で次を入れている。
+
+- `--max-retries 3`：一時的な失敗を再試行する
+- `--accept 200,204,206,429`：レート制限（429）を失敗扱いにしない
+- `--cache --max-cache-age 1d` + `actions/cache`：同じ URL への再問い合わせを減らす
+- `schedule`（毎週月曜 06:00 JST）：差分が無くてもリンク腐敗を定期的に拾う
+
+ボット避けで恒久的に 4xx / 999 を返すホスト（LinkedIn・X など）は、
+呼び出し元リポジトリのルートに `lychee.toml` を置いて除外する。
+
+```toml
+exclude = [
+  '^https://www\.linkedin\.com/',
+  '^https://(x|twitter)\.com/',
+]
+```
+
+### 段階導入
+
+既にリンク腐敗があるリポジトリでは、片付けるまで `fail: false` で報告のみにできる
+（`free-policy.yml` の `enforce` と同じ考え方）。結果は job summary に出る。
+
+```yaml
+jobs:
+  lychee:
+    uses: genzouw/ci-workflows/.github/workflows/lychee.yml@<full-commit-SHA> # vX.Y.Z
+    with:
+      fail: false
+```
 
 ## `free-policy.yml`（完全無料ポリシーチェック）
 
