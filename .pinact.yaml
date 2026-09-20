@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/suzuki-shunsuke/pinact/v5.0.0/json-schema/pinact.json
+#
+# pinact の設定。`pinact.yml` (reusable workflow) は呼び出し元リポジトリを
+# チェックアウトして実行されるため、本ファイルは ci-workflows 自身の
+# セルフテストにのみ効く。呼び出し元で閾値を変えたい場合は、スタブの
+# `with: { min_age: <日数> }` で上書きするか、呼び出し元リポジトリに
+# 同名のファイルを置くこと。
+version: 3
+
+files:
+  - pattern: .github/workflows/*.yml
+  - pattern: .github/workflows/*.yaml
+  - pattern: .github/actions/*/action.yml
+  - pattern: .github/actions/*/action.yaml
+
+# 上流の新リリースを即時に取り込まない (cooldown)。
+# 値は .github/dependabot.yml の `cooldown.default-days` と揃えること。
+# 揃っていないと、Dependabot が出した更新 PR が pinact で落ちる / その逆が起きる。
+min_age:
+  value: 7
+  always: true
+
+rules:
+  # 自リポジトリ (genzouw/ci-workflows) 内の composite action 参照を除外する。
+  #
+  # 理由: workflow_call で他リポジトリから呼ばれると $GITHUB_WORKSPACE は
+  # 呼び出し元のツリーになるため、相対パスでは自分の composite action を
+  # 解決できず「絶対パス + full-commit-SHA」で参照せざるを得ない
+  # (gitleaks.yml のコメント参照)。その SHA は action.yml を変更した
+  # コミットを指すため、リリースタグとは一致しない。
+  # --verify (アノテーションと SHA の一致検査) と min-age (経過日数) は
+  # いずれも「外部の上流を信頼できるか」を見る検査であり、自リポジトリの
+  # 同一 PR 内コミットに適用する意味がない。
+  - ignore: true
+    conditions:
+      - expr: |
+          ActionRepoFullName == "genzouw/ci-workflows"
