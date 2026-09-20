@@ -114,6 +114,10 @@ jobs:
           if [ "$status" -ne 0 ]; then
             echo ""
             case "$status" in
+              1)
+                echo "::error::Action 参照が SHA でピン留めされていません。"
+                echo "\`pinact run\` を実行して SHA へ置換してください。"
+                ;;
               2)
                 echo "::error::pinact が自動修正できない Action があります (アノテーション不一致、または pin した Action のリリースが新しすぎる cooldown 未経過のいずれか)。"
                 echo "アノテーション不一致の場合: \`pinact run\` を実行してアノテーションを実際の SHA に合わせてください。"
