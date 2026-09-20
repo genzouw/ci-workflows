@@ -15,6 +15,8 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `shellcheck.yml`        | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)`       | `**/*.sh`, `.github/actions/**`              |
 | `free-policy.yml`       | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）                            | `Free-only policy check`               | なし（常時実行）                             |
 | `dependency-review.yml` | PR で追加・更新される依存の脆弱性とライセンスを判定（PR 限定）                    | `dependency-review (new dependencies)` | なし（`pull_request` のみ）                  |
+| `typos.yml`             | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                  | なし（常時実行）                             |
+| `semantic-pr.yml`       | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)`   | なし（`pull_request` のみ）                  |
 | `lychee.yml`            | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`           | `**/*.md`, `**/*.html`, `lychee.toml`        |
 
 ## 提供 composite action
@@ -151,6 +153,96 @@ jobs:
 PR へのサマリーコメント投稿（`comment-summary-in-pr`）は `pull-requests: write` を要するため、
 最小権限を保つ目的で無効にしている。結果は job summary で読む。
 
+## `typos.yml`（スペルミス検出）
+
+既存の lint はいずれも**綴り**を見ていない。
+
+| 既存の検査         | 見ているもの                                          | スペル |
+| ------------------ | ----------------------------------------------------- | ------ |
+| `markdownlint.yml` | Markdown の構造（見出し階層・箇条書き・行末空白など） | 見ない |
+| `shellcheck.yml`   | シェルの構文・クォート・未定義変数                    | 見ない |
+| `actionlint.yml`   | ワークフローのスキーマ・式・シェル                    | 見ない |
+| `hadolint.yml`     | Dockerfile のベストプラクティス                       | 見ない |
+
+`typos` は「よくある綴り間違い」の辞書に基づく検出で、未知語を片端から報告する
+一般的なスペルチェッカとは異なり誤検知が少ない。そのため PR を落とす検査として運用できる。
+日本語の文章は辞書に載らないため素通りする。
+
+### 誤検知が出たときの逃がし方
+
+呼び出し元リポジトリのルートに `_typos.toml`（`.typos.toml` / `typos.toml` も可）を置く。
+
+```toml
+# 固有名詞・意図的な綴りを辞書へ追加する
+[default.extend-words]
+ans = "ans"
+
+# ファイル単位で除外する
+[files]
+extend-exclude = ["vendor/**", "*.min.js"]
+```
+
+スタブ側で対象を絞ることもできる。
+
+```yaml
+jobs:
+  typos:
+    uses: genzouw/ci-workflows/.github/workflows/typos.yml@<full-commit-SHA> # vX.Y.Z
+    with:
+      files: 'src docs README.md'
+```
+
+## `semantic-pr.yml`（PR タイトルの規約検査）
+
+`AGENTS.md` 4 章は「コミットメッセージおよび PR タイトルは Conventional Commits に従う」と
+定めているが、これを機械的に検査する仕組みが無かった。squash merge では **PR タイトルが
+そのままデフォルトブランチのコミットメッセージになる**ため、崩れたタイトルは履歴に恒久的に残る。
+
+### 既定で許可する type
+
+`build` / `chore` / `ci` / `docs` / `feat` / `fix` / `perf` / `refactor` / `revert` / `style` / `test`
+
+### 入力
+
+| 入力                     | 既定                     | 用途                                                                                                               |
+| ------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `types`                  | 上記 11 種（改行区切り） | 許可する type を絞る・増やす                                                                                       |
+| `require_scope`          | `false`                  | scope を必須にする                                                                                                 |
+| `validate_single_commit` | `true`                   | コミットが 1 つだけの PR では、squash merge 時に GitHub がそのコミットメッセージを既定に使うため、そちらも検査する |
+
+### `pull_request_target` を使わない
+
+本 Action の上流 README は `pull_request_target` を推奨しているが、本リポジトリでは
+`actionlint.yml` が `pull_request_target` を禁止している（fork PR からのシークレット漏洩対策）。
+本検査はタイトルの**読み取りだけ**で書き込みを伴わないため、fork からの PR で
+読み取り専用トークンになっても成立する。スタブのトリガーは `pull_request` のみにすること。
+
+```yaml
+name: semantic-pr
+
+on:
+  pull_request:
+    branches: [main, master]
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: semantic-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  semantic-pr:
+    uses: genzouw/ci-workflows/.github/workflows/semantic-pr.yml@<full-commit-SHA> # vX.Y.Z
+```
+
+> [!NOTE]
+> Dependabot の PR タイトルは、`.github/dependabot.yml` の `commit-message.prefix` を
+> 設定していないと `Bump X from A to B` になり本検査で落ちる。
+> 展開先では `prefix: "ci"` / `include: "scope"` の設定を先に入れること。
+
 ## `lychee.yml`（リンク切れ検出）
 
 `markdownlint.yml` は Markdown の**構造**しか見ないため、リンクの書式が正しければ
@@ -202,8 +294,6 @@ jobs:
     with:
       fail: false
 ```
-
-> > > > > > > origin/main
 
 ## `free-policy.yml`（完全無料ポリシーチェック）
 

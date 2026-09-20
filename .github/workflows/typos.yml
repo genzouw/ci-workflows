@@ -1,0 +1,50 @@
+name: typos
+
+# ソースコード・ドキュメント横断のスペルミス検出。
+#
+# markdownlint は Markdown の「構造」を見るだけでスペルは見ず、shellcheck /
+# actionlint / hadolint はいずれも対象言語の文法しか見ない。識別子・コメント・
+# README に残るスペルミスは、現状どの検査も拾えない。
+#
+# typos は「よくある綴り間違い」の辞書に基づく検出で、未知語を片っ端から
+# 報告する一般的なスペルチェッカとは異なり誤検知が少ない。そのため PR を
+# 落とす検査として運用できる。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  workflow_call:
+    inputs:
+      files:
+        description: "検査対象のパス・パターン。既定はリポジトリ全体。"
+        type: string
+        required: false
+        default: "."
+      config:
+        description: "設定ファイルのパス。省略時は呼び出し元の _typos.toml / .typos.toml / typos.toml を自動検出する。"
+        type: string
+        required: false
+        default: ""
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  typos:
+    name: typos (spell check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run typos
+        uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1.50.2
+        with:
+          # workflow_call 以外 (本リポジトリのセルフテスト) では inputs が空になる。
+          files: ${{ inputs.files || '.' }}
+          config: ${{ inputs.config }}

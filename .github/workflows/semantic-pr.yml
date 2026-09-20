@@ -1,0 +1,93 @@
+name: semantic-pr
+
+# PR タイトルが Conventional Commits に従っているかを検査する。
+#
+# AGENTS.md 4 章は「コミットメッセージおよび PR タイトルは Conventional Commits に
+# 従う」と定めているが、これを機械的に検査する仕組みが無かった。squash merge では
+# PR タイトルがそのままデフォルトブランチのコミットメッセージになるため、
+# タイトルの崩れは履歴に恒久的に残る。
+#
+# `pull_request_target` は使わない (actionlint.yml が禁止している)。
+# 本検査はタイトルの読み取りだけで書き込みを伴わないため、fork からの PR で
+# 読み取り専用トークンになっても成立する。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  workflow_call:
+    inputs:
+      types:
+        description: "許可する type の一覧 (改行区切り)。既定は Conventional Commits の標準 type。"
+        type: string
+        required: false
+        default: |
+          build
+          chore
+          ci
+          docs
+          feat
+          fix
+          perf
+          refactor
+          revert
+          style
+          test
+      require_scope:
+        description: "scope を必須にするか。"
+        type: boolean
+        required: false
+        default: false
+      validate_single_commit:
+        description: "コミットが 1 つだけの PR では、squash merge 時に GitHub がそのコミットメッセージを既定に使う。そのコミットメッセージも検査するか。"
+        type: boolean
+        required: false
+        default: true
+  pull_request:
+    branches: [main, master]
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  semantic-pr:
+    name: semantic-pr (conventional commits)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve configuration
+        id: cfg
+        # workflow_call 以外 (本リポジトリのセルフテスト) では inputs が空になる。
+        # `${{ inputs.x || <既定> }}` を `with:` に直書きすると
+        #   - 複数行の既定値が 1 行へ畳まれる (types は改行区切りのため壊れる)
+        #   - 真偽値の false が既定値で上書きされる (false || true => true)
+        # という 2 つの罠があるため、ここで解決してから渡す。
+        env:
+          TYPES: ${{ inputs.types }}
+          REQUIRE_SCOPE: ${{ inputs.require_scope }}
+          VALIDATE_SINGLE_COMMIT: ${{ inputs.validate_single_commit }}
+        run: |
+          set -euo pipefail
+
+          types="${TYPES:-}"
+          if [ -z "$types" ]; then
+            types=$'build\nchore\nci\ndocs\nfeat\nfix\nperf\nrefactor\nrevert\nstyle\ntest'
+          fi
+
+          {
+            echo "types<<TYPES_EOF"
+            printf '%s\n' "$types"
+            echo "TYPES_EOF"
+            echo "require_scope=${REQUIRE_SCOPE:-false}"
+            echo "validate_single_commit=${VALIDATE_SINGLE_COMMIT:-true}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate PR title
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          # PR とコミットの読み取りのみ。完全無料ポリシーで唯一許可されているトークン。
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          types: ${{ steps.cfg.outputs.types }}
+          requireScope: ${{ steps.cfg.outputs.require_scope }}
+          validateSingleCommit: ${{ steps.cfg.outputs.validate_single_commit }}
