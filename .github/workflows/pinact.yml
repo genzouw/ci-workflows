@@ -1,0 +1,128 @@
+name: pinact
+
+# Action 参照の「形式」ではなく「中身」を検査する。
+#
+# actionlint.yml の "Reject non-SHA action references" は `uses:` が 40 桁 SHA で
+# あることしか見ない (ネットワーク不要の即時ゲート)。本ワークフローはそこを通った
+# あとに残る 2 つの穴を GitHub API 経由で塞ぐ。
+#
+#   1. アノテーション詐称: `@<SHA> # v1.2.3` の SHA が、そのタグの指す SHA と
+#      一致しているか。コメントだけ信頼できる版に見せかけた差分は grep では通る。
+#   2. cooldown: pin した commit が min-age 日より古いか。SHA で固定していても、
+#      上流が侵害された直後のリリースを取り込めば意味がない。取り込みを一定期間
+#      遅らせることで、上流側で問題が発覚する時間を確保する。
+#
+# 閾値は呼び出し元の .github/dependabot.yml の `cooldown.default-days` と
+# 揃えること。揃っていないと Dependabot の更新 PR が本チェックで落ちる。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  workflow_call:
+    inputs:
+      min_age:
+        description: "pin した commit に要求する最小経過日数。0 で経過日数チェックを無効化する。呼び出し元に pinact 設定ファイルがある場合はそちらが優先される。"
+        type: number
+        required: false
+        default: 7
+  push:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.pinact.yaml'
+      - '.pinact.yml'
+      - '.github/pinact.yaml'
+      - '.github/pinact.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.pinact.yaml'
+      - '.pinact.yml'
+      - '.github/pinact.yaml'
+      - '.github/pinact.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pinact:
+    name: pinact (action pin verification)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinact
+        env:
+          PINACT_VERSION: 5.0.0
+        run: |
+          set -euo pipefail
+          TARBALL="pinact_linux_amd64.tar.gz"
+          BASE_URL="https://github.com/suzuki-shunsuke/pinact/releases/download/v${PINACT_VERSION}"
+          curl -fsSL -o "/tmp/${TARBALL}" "${BASE_URL}/${TARBALL}"
+          curl -fsSL -o /tmp/pinact_checksums.txt "${BASE_URL}/pinact_${PINACT_VERSION}_checksums.txt"
+          cd /tmp
+          # checksums.txt には <asset>.sbom.json の行も含まれるため、行末アンカーで
+          # 対象のタールボールだけを取り出す (部分一致だと sbom 行も拾って失敗する)。
+          grep -E "[[:space:]]${TARBALL}\$" pinact_checksums.txt | sha256sum -c -
+          tar -xzf "/tmp/${TARBALL}" -C /tmp pinact
+          sudo install -m 0755 /tmp/pinact /usr/local/bin/pinact
+          pinact --version
+
+      - name: Verify action pins (annotation match / release age)
+        env:
+          # GITHUB_TOKEN は API のレート制限回避のためだけに使う (読み取りのみ)。
+          # 完全無料ポリシーで唯一許可されているトークン。
+          GITHUB_TOKEN: ${{ github.token }}
+          # workflow_call 以外 (本リポジトリのセルフテスト) では inputs が空になる。
+          MIN_AGE: ${{ inputs.min_age }}
+        run: |
+          set -euo pipefail
+
+          # 呼び出し元が pinact の設定ファイルを持つ場合は、CLI の --min-age を
+          # 渡さない。CLI フラグは設定ファイルの rules[].min_age より優先されるため、
+          # 渡すと「この Action だけ閾値を変える」という例外指定を握り潰してしまう。
+          config_found=""
+          for f in .pinact.yaml .pinact.yml .github/pinact.yaml .github/pinact.yml; do
+            if [ -f "$f" ]; then
+              config_found="$f"
+              break
+            fi
+          done
+
+          args=(run --check --verify)
+          if [ -n "$config_found" ]; then
+            echo "設定ファイルを検出しました: ${config_found} (--min-age は渡しません)"
+          else
+            echo "設定ファイルはありません。--min-age ${MIN_AGE:-7} を適用します。"
+            args+=(--min-age "${MIN_AGE:-7}")
+          fi
+
+          # 終了コード: 2 = min-age 違反 / 3 = アノテーション不一致 / 1 = 未ピン留め
+          # `if ! cmd` の then 節では $? が否定後の 0 になるため、set +e で素の終了コードを取る。
+          set +e
+          pinact "${args[@]}"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo ""
+            case "$status" in
+              2)
+                echo "::error::pin した Action のリリースが新しすぎます (cooldown 未経過)。"
+                echo "上流が侵害された直後のリリースを取り込まないための待機期間です。指定日数が経過してから取り込んでください。"
+                ;;
+              3)
+                echo "::error::\`# vX.Y.Z\` アノテーションが、pin した SHA と一致していません。"
+                echo "修正方法: \`pinact run\` を実行してアノテーションを実際の SHA に合わせるか、正しい SHA へ差し替えてください。"
+                ;;
+              *)
+                echo "::error::Action 参照の検証に失敗しました (exit ${status})。"
+                ;;
+            esac
+            exit "$status"
+          fi
+          echo "✅ 全ての Action 参照でアノテーションが一致し、cooldown も満たしています。"
