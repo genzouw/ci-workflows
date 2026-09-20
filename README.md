@@ -14,6 +14,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）               | `Hadolint (Dockerfile lint)`     | `**/Dockerfile*`       |
 | `shellcheck.yml`   | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)` | `**/*.sh`, `.github/actions/**` |
 | `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）         | `Free-only policy check`         | なし（常時実行）       |
+| `typos.yml`        | ソースコード・ドキュメント横断のスペルミス検出                 | `typos (spell check)`            | なし（常時実行）       |
 
 ## 提供 composite action
 
@@ -95,6 +96,45 @@ jobs:
 
 - 参照は **full-length commit SHA でピン留め**すること（actionlint が強制する）。更新は各リポジトリの Dependabot (`github-actions` ecosystem) が自動でPRを出す
 - トリガー・concurrency・permissions は**スタブ側**で定義する（本リポジトリの各ワークフローに付いている `push` / `pull_request` トリガーは本リポジトリ自身のセルフテスト用）
+
+## `typos.yml`（スペルミス検出）
+
+既存の lint はいずれも**綴り**を見ていない。
+
+| 既存の検査 | 見ているもの | スペル |
+| --- | --- | --- |
+| `markdownlint.yml` | Markdown の構造（見出し階層・箇条書き・行末空白など） | 見ない |
+| `shellcheck.yml` | シェルの構文・クォート・未定義変数 | 見ない |
+| `actionlint.yml` | ワークフローのスキーマ・式・シェル | 見ない |
+| `hadolint.yml` | Dockerfile のベストプラクティス | 見ない |
+
+`typos` は「よくある綴り間違い」の辞書に基づく検出で、未知語を片端から報告する
+一般的なスペルチェッカとは異なり誤検知が少ない。そのため PR を落とす検査として運用できる。
+日本語の文章は辞書に載らないため素通りする。
+
+### 誤検知が出たときの逃がし方
+
+呼び出し元リポジトリのルートに `_typos.toml`（`.typos.toml` / `typos.toml` も可）を置く。
+
+```toml
+# 固有名詞・意図的な綴りを辞書へ追加する
+[default.extend-words]
+ans = "ans"
+
+# ファイル単位で除外する
+[files]
+extend-exclude = ["vendor/**", "*.min.js"]
+```
+
+スタブ側で対象を絞ることもできる。
+
+```yaml
+jobs:
+  typos:
+    uses: genzouw/ci-workflows/.github/workflows/typos.yml@<full-commit-SHA> # vX.Y.Z
+    with:
+      files: "src docs README.md"
+```
 
 ## `free-policy.yml`（完全無料ポリシーチェック）
 
