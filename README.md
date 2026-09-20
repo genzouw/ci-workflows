@@ -14,6 +14,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）               | `Hadolint (Dockerfile lint)`     | `**/Dockerfile*`       |
 | `shellcheck.yml`   | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)` | `**/*.sh`, `.github/actions/**` |
 | `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）         | `Free-only policy check`         | なし（常時実行）       |
+| `dependency-review.yml` | PR で追加・更新される依存の脆弱性とライセンスを判定（PR 限定） | `dependency-review (new dependencies)` | なし（`pull_request` のみ） |
 
 ## 提供 composite action
 
@@ -95,6 +96,59 @@ jobs:
 
 - 参照は **full-length commit SHA でピン留め**すること（actionlint が強制する）。更新は各リポジトリの Dependabot (`github-actions` ecosystem) が自動でPRを出す
 - トリガー・concurrency・permissions は**スタブ側**で定義する（本リポジトリの各ワークフローに付いている `push` / `pull_request` トリガーは本リポジトリ自身のセルフテスト用）
+
+## `dependency-review.yml`（新規依存のゲート）
+
+### `trivy.yml` との役割分担（重複ではない）
+
+| | `trivy.yml` | `dependency-review.yml` |
+| --- | --- | --- |
+| 走査範囲 | ツリー全体（既存の依存を含む） | PR の差分で**追加・更新された依存**のみ |
+| 判定 | `--exit-code 0` で**報告のみ**（SARIF を Security タブへ） | 閾値以上なら**PR を落とす** |
+| ライセンス | 見ない | `deny-licenses` で判定できる |
+| 目的 | 今あるものの可視化 | これから増やすものの遮断 |
+
+`trivy.yml` を報告のみにしているのは、既存の負債で CI を赤くしないための意図的な設定である。
+その結果、**脆弱な依存の追加を止める検査は現状ひとつも無い**。本ワークフローがその役割を担う。
+
+GitHub Actions も依存グラフの対象に含まれるため、`package.json` などのマニフェストを持たない
+リポジトリでも `uses:` の更新が検査対象になる。
+
+### トリガーの制約
+
+本 Action は base と head の比較を前提とするため、**`pull_request` 以外では動かない**。
+スタブのトリガーは `pull_request` のみにすること（`push` を足すと失敗する）。
+
+```yaml
+name: dependency-review
+
+on:
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    uses: genzouw/ci-workflows/.github/workflows/dependency-review.yml@<full-commit-SHA> # vX.Y.Z
+```
+
+### 閾値と例外
+
+| 入力 | 既定 | 用途 |
+| --- | --- | --- |
+| `fail_on_severity` | `high` | `low` / `moderate` / `high` / `critical` |
+| `deny_licenses` | 空（検査しない） | 例: `AGPL-3.0, GPL-3.0` |
+| `allow_ghsas` | 空 | 修正版が無い等の暫定例外 |
+| `config_file` | 空 | 細かい制御は設定ファイルで行う |
+
+PR へのサマリーコメント投稿（`comment-summary-in-pr`）は `pull-requests: write` を要するため、
+最小権限を保つ目的で無効にしている。結果は job summary で読む。
 
 ## `free-policy.yml`（完全無料ポリシーチェック）
 
