@@ -21,10 +21,15 @@ on:
   workflow_call:
     inputs:
       args:
-        description: "lychee へ渡す引数。既定は Markdown / HTML を対象に再試行つきで検査する。"
+        # 既定値はここでは持たず、ジョブの env.DEFAULT_ARGS を唯一の情報源とする
+        # (workflow_call の input default は job/step の env を参照できないため)。
+        # 呼び出し元が省略した場合・本リポジトリのセルフテストの場合のいずれも
+        # inputs.args は空文字になり、Check links ステップ側で DEFAULT_ARGS へ
+        # フォールバックする。
+        description: "lychee へ渡す引数。既定は Markdown / HTML を対象に再試行つきで検査する (DEFAULT_ARGS 参照)。"
         type: string
         required: false
-        default: "--no-progress --max-retries 3 --accept 200,204,206,429 ./**/*.md ./**/*.html"
+        default: ""
       fail:
         description: "リンク切れ検出時にジョブを失敗させるか。false なら job summary への報告のみ (段階導入・既存のリンク腐敗を片付けるまでの猶予用)。"
         type: boolean
@@ -58,6 +63,11 @@ jobs:
     name: lychee (broken link check)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # lychee へ渡すデフォルト引数の唯一の情報源。
+      # inputs.args (workflow_call) が空の場合 (呼び出し元が省略 / 本リポジトリの
+      # セルフテストで inputs 自体が使えない) に Check links ステップで使う。
+      DEFAULT_ARGS: "--no-progress --max-retries 3 --accept 200,204,206,429 ./**/*.md ./**/*.html"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,14 +115,14 @@ jobs:
           FAIL: ${{ inputs.fail }}
         run: |
           set -euo pipefail
-          default_args="--no-progress --max-retries 3 --accept 200,204,206,429 ./**/*.md ./**/*.html"
 
           set +e
           # shellcheck disable=SC2086
-          # ARGS は複数の引数を含む 1 つの文字列なので、意図的に単語分割させる。
+          # ARGS / DEFAULT_ARGS は複数の引数を含む 1 つの文字列なので、
+          # 意図的に単語分割させる。
           lychee --cache --max-cache-age 1d \
             --format markdown --output /tmp/lychee-report.md \
-            ${ARGS:-$default_args}
+            ${ARGS:-$DEFAULT_ARGS}
           status=$?
           set -e
 
