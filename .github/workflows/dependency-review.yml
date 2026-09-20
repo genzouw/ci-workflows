@@ -59,7 +59,7 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           # workflow_call 以外 (本リポジトリのセルフテスト) では inputs が空になる。
-          fail-on-severity: ${{ inputs.fail_on_severity || 'high' }}
+          fail-on-severity: ${{ inputs.fail_on_severity }}
           # 空文字は Action 側で「未指定」として扱われる (getOptionalInput が
           # 長さ 0 の入力を undefined に落とす) ため、既定値のままでも
           # 外部設定ファイルの内容を上書きしない。
