@@ -102,7 +102,10 @@ jobs:
             args+=(--min-age "${MIN_AGE:-7}")
           fi
 
-          # 終了コード: 2 = min-age 違反 / 3 = アノテーション不一致 / 1 = 未ピン留め
+          # 終了コード (pinact v5.0.0 docs/exit_codes.md 準拠):
+          #   1 = 未ピン留め (自動修正対象)
+          #   2 = 自動修正不可 (アノテーション不一致 または min-age/cooldown 違反)
+          #   3 = GitHub API エラー・CLI フラグ不正など、pinact 自体の予期しない失敗
           # `if ! cmd` の then 節では $? が否定後の 0 になるため、set +e で素の終了コードを取る。
           set +e
           pinact "${args[@]}"
@@ -112,12 +115,12 @@ jobs:
             echo ""
             case "$status" in
               2)
-                echo "::error::pin した Action のリリースが新しすぎます (cooldown 未経過)。"
-                echo "上流が侵害された直後のリリースを取り込まないための待機期間です。指定日数が経過してから取り込んでください。"
+                echo "::error::pinact が自動修正できない Action があります (アノテーション不一致、または pin した Action のリリースが新しすぎる cooldown 未経過のいずれか)。"
+                echo "アノテーション不一致の場合: \`pinact run\` を実行してアノテーションを実際の SHA に合わせてください。"
+                echo "cooldown 未経過の場合: 上流が侵害された直後のリリースを取り込まないための待機期間です。指定日数が経過してから取り込んでください。"
                 ;;
               3)
-                echo "::error::\`# vX.Y.Z\` アノテーションが、pin した SHA と一致していません。"
-                echo "修正方法: \`pinact run\` を実行してアノテーションを実際の SHA に合わせるか、正しい SHA へ差し替えてください。"
+                echo "::error::pinact の実行自体に失敗しました (GitHub API エラー、CLI フラグの不正な組み合わせ、またはその他の予期しないエラー)。"
                 ;;
               *)
                 echo "::error::Action 参照の検証に失敗しました (exit ${status})。"
