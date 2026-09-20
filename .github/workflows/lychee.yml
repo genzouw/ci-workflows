@@ -1,0 +1,131 @@
+name: lychee
+
+# ドキュメント中のリンク切れを検出する。
+#
+# markdownlint は Markdown の「構造」しか見ないため、リンクの書式が正しければ
+# 参照先が消えていても通過する。ドキュメント中心の公開リポジトリでは、外部
+# サービスの終了やリポジトリのリネームで URL が静かに死ぬ。
+#
+# 公式の lycheeverse/lychee-action は使わず、リリースバイナリを
+# チェックサム検証して導入する。本リポジトリの Actions 許可リスト
+# (allowed_actions: selected) に lycheeverse が含まれておらず、Action 参照は
+# startup_failure になるため。actionlint.yml / trivy.yml と同じ導入方式で揃う。
+#
+# 外部ホストへ HTTP を出す検査のため、他のワークフローより不安定になりやすい。
+# 既定で再試行と一時エラーの許容を入れているが、恒久的に 4xx を返す
+# ボット避けホスト (LinkedIn の 999 など) は呼び出し元の lychee.toml で
+# 除外すること。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  workflow_call:
+    inputs:
+      args:
+        description: "lychee へ渡す引数。既定は Markdown / HTML を対象に再試行つきで検査する。"
+        type: string
+        required: false
+        default: "--no-progress --max-retries 3 --accept 200,204,206,429 ./**/*.md ./**/*.html"
+      fail:
+        description: "リンク切れ検出時にジョブを失敗させるか。false なら job summary への報告のみ (段階導入・既存のリンク腐敗を片付けるまでの猶予用)。"
+        type: boolean
+        required: false
+        default: true
+  push:
+    branches: [main, master]
+    paths:
+      - '**/*.md'
+      - '**/*.html'
+      - 'lychee.toml'
+      - '.github/workflows/lychee.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '**/*.md'
+      - '**/*.html'
+      - 'lychee.toml'
+      - '.github/workflows/lychee.yml'
+  schedule:
+    # 毎週月曜 06:00 JST (= 日曜 21:00 UTC)。
+    # リンク切れはコミットと無関係に発生するため、差分が無くても定期的に確認する。
+    - cron: '0 21 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lychee:
+    name: lychee (broken link check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore lychee cache
+        # 検査結果をキャッシュして、同じ URL への再問い合わせを減らす。
+        # 外部サイトへの負荷と 429 の発生を抑えるため。
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .lycheecache
+          key: lychee-cache-${{ github.run_id }}
+          restore-keys: lychee-cache-
+
+      - name: Install lychee
+        env:
+          LYCHEE_VERSION: 0.24.2
+        run: |
+          set -euo pipefail
+          TARGET="x86_64-unknown-linux-musl"
+          TARBALL="lychee-${TARGET}.tar.gz"
+          BASE_URL="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}"
+          curl -fsSL -o "/tmp/${TARBALL}" "${BASE_URL}/${TARBALL}"
+          curl -fsSL -o "/tmp/${TARBALL}.sha256" "${BASE_URL}/${TARBALL}.sha256"
+          cd /tmp && sha256sum -c "${TARBALL}.sha256"
+          tar -xzf "/tmp/${TARBALL}" -C /tmp "lychee-${TARGET}/lychee"
+          sudo install -m 0755 "/tmp/lychee-${TARGET}/lychee" /usr/local/bin/lychee
+          lychee --version
+
+      - name: Check links
+        env:
+          # github.com の URL を検査する際のレート制限回避 (読み取りのみ)。
+          GITHUB_TOKEN: ${{ github.token }}
+          # workflow_call 以外 (本リポジトリのセルフテスト) では inputs が空になる。
+          # `${{ inputs.fail || true }}` と書くと呼び出し元が指定した false が
+          # true に化けるため、シェル側で未設定かどうかを判定する。
+          ARGS: ${{ inputs.args }}
+          FAIL: ${{ inputs.fail }}
+        run: |
+          set -euo pipefail
+          default_args="--no-progress --max-retries 3 --accept 200,204,206,429 ./**/*.md ./**/*.html"
+
+          set +e
+          # shellcheck disable=SC2086
+          # ARGS は複数の引数を含む 1 つの文字列なので、意図的に単語分割させる。
+          lychee --cache --max-cache-age 1d \
+            --format markdown --output /tmp/lychee-report.md \
+            ${ARGS:-$default_args}
+          status=$?
+          set -e
+
+          if [ -f /tmp/lychee-report.md ]; then
+            {
+              echo "## lychee (broken link check)"
+              echo ""
+              cat /tmp/lychee-report.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$status" -eq 0 ]; then
+            echo "✅ リンク切れはありません。"
+            exit 0
+          fi
+
+          if [ "${FAIL:-true}" = "false" ]; then
+            echo "::warning::リンク切れを検出しました (fail: false のため報告のみ)。詳細は job summary を参照してください。"
+            exit 0
+          fi
+          echo "::error::リンク切れを検出しました。詳細は job summary を参照してください。"
+          echo "恒久的にボット避けで 4xx / 999 を返すホストは、リポジトリルートの lychee.toml で除外してください。"
+          exit "$status"
