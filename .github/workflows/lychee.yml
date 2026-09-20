@@ -33,21 +33,21 @@ on:
   push:
     branches: [main, master]
     paths:
-      - '**/*.md'
-      - '**/*.html'
-      - 'lychee.toml'
-      - '.github/workflows/lychee.yml'
+      - "**/*.md"
+      - "**/*.html"
+      - "lychee.toml"
+      - ".github/workflows/lychee.yml"
   pull_request:
     branches: [main, master]
     paths:
-      - '**/*.md'
-      - '**/*.html'
-      - 'lychee.toml'
-      - '.github/workflows/lychee.yml'
+      - "**/*.md"
+      - "**/*.html"
+      - "lychee.toml"
+      - ".github/workflows/lychee.yml"
   schedule:
     # 毎週月曜 06:00 JST (= 日曜 21:00 UTC)。
     # リンク切れはコミットと無関係に発生するため、差分が無くても定期的に確認する。
-    - cron: '0 21 * * 0'
+    - cron: "0 21 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -63,13 +63,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Compute cache date
+        # 保存キーを実行ごとに一意 (github.run_id) にすると actions/cache の
+        # エントリが際限なく増え、リポジトリ全体のキャッシュ容量を圧迫する。
+        # UTC 日付単位のキーにして、同じ日のジョブ間でキャッシュを再利用する。
+        id: cache-date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Restore lychee cache
         # 検査結果をキャッシュして、同じ URL への再問い合わせを減らす。
         # 外部サイトへの負荷と 429 の発生を抑えるため。
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .lycheecache
-          key: lychee-cache-${{ github.run_id }}
+          key: lychee-cache-${{ steps.cache-date.outputs.date }}
           restore-keys: lychee-cache-
 
       - name: Install lychee
