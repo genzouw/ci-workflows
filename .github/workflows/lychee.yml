@@ -117,6 +117,12 @@ jobs:
           set -euo pipefail
 
           set +e
+          # 単語分割はさせたいが、パス名展開 (globbing) はさせたくないため
+          # 一時的に noglob にする。globstar が既定で無効な bash では
+          # `./**/*.md` のような `**` が `*` と同義になり、ネストしたディレクトリの
+          # md/html がシェルに 1 階層だけ展開されて検査対象から漏れる
+          # (lychee 自身の glob 実装なら再帰的に解決できる)。
+          set -f
           # shellcheck disable=SC2086
           # ARGS / DEFAULT_ARGS は複数の引数を含む 1 つの文字列なので、
           # 意図的に単語分割させる。
@@ -124,6 +130,7 @@ jobs:
             --format markdown --output /tmp/lychee-report.md \
             ${ARGS:-$DEFAULT_ARGS}
           status=$?
+          set +f
           set -e
 
           if [ -f /tmp/lychee-report.md ]; then
