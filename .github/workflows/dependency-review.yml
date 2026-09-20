@@ -1,0 +1,71 @@
+name: dependency-review
+
+# PR で「新しく持ち込まれる依存」だけを見て、脆弱性とライセンスを判定する。
+#
+# trivy.yml との違い:
+#   - trivy.yml はツリー全体を走査し、`--exit-code 0` で **報告のみ** (SARIF)。
+#     既存の負債を赤にしないための意図的な設定で、ビルドは落ちない。
+#   - 本ワークフローは base..head の **差分**に限定し、新規に追加・更新された
+#     依存が閾値以上の脆弱性を持つ場合に PR を落とす。既存の負債は無視する。
+#
+# つまり「今あるもの」を可視化するのが trivy、「これから増やすもの」を止めるのが
+# 本ワークフロー。守備範囲が重ならないため併用する。
+#
+# GitHub Actions も依存グラフの対象に含まれるため、マニフェストを持たない
+# リポジトリでも `uses:` の更新が検査対象になる。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  # 本 Action は base/head の比較を前提とするため、pull_request 以外では動かない。
+  workflow_call:
+    inputs:
+      fail_on_severity:
+        description: "この深刻度以上の脆弱性を持つ依存が追加されたら失敗する (low / moderate / high / critical)。"
+        type: string
+        required: false
+        default: "high"
+      deny_licenses:
+        description: "許可しない SPDX ライセンス識別子のカンマ区切り。空ならライセンス検査を行わない。"
+        type: string
+        required: false
+        default: ""
+      allow_ghsas:
+        description: "個別に許可する GHSA ID のカンマ区切り (暫定的な例外用)。"
+        type: string
+        required: false
+        default: ""
+      config_file:
+        description: "設定ファイルのパス (例: .github/dependency-review-config.yml)。細かい制御はこちらで行う。"
+        type: string
+        required: false
+        default: ""
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: dependency-review (new dependencies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Review new dependencies
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # workflow_call 以外 (本リポジトリのセルフテスト) では inputs が空になる。
+          fail-on-severity: ${{ inputs.fail_on_severity }}
+          # 空文字は Action 側で「未指定」として扱われる (getOptionalInput が
+          # 長さ 0 の入力を undefined に落とす) ため、既定値のままでも
+          # 外部設定ファイルの内容を上書きしない。
+          deny-licenses: ${{ inputs.deny_licenses }}
+          allow-ghsas: ${{ inputs.allow_ghsas }}
+          config-file: ${{ inputs.config_file }}
+          # PR へのサマリーコメント投稿は pull-requests: write を要する。
+          # 最小権限を保つため無効にし、結果は job summary で読む。
+          comment-summary-in-pr: never

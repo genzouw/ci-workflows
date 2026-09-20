@@ -4,20 +4,21 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 
 ## 提供ワークフロー
 
-| ワークフロー       | 内容                                                                              | job 名 (= check context)             | paths フィルタ推奨                                            |
-| ------------------ | --------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------- |
-| `gitleaks.yml`     | シークレット漏洩スキャン（全ブランチ履歴）                                        | `Scan for leaked secrets`            | なし（常時実行）                                              |
-| `trivy.yml`        | 脆弱性・設定ミス・シークレットの fs スキャン                                      | `Trivy filesystem scan`              | なし（常時実行）                                              |
-| `zizmor.yml`       | GitHub Actions ワークフローのセキュリティ監査                                     | `zizmor`                             | なし（常時実行）                                              |
-| `actionlint.yml`   | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止                    | `actionlint`                         | `.github/workflows/**`, `.github/actions/**`                  |
-| `markdownlint.yml` | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`）                    | `markdownlint-cli2`                  | `**/*.md`                                                     |
-| `hadolint.yml`     | Dockerfile lint（Dockerfile が無ければスキップ）                                  | `Hadolint (Dockerfile lint)`         | `**/Dockerfile*`                                              |
-| `shellcheck.yml`   | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)`     | `**/*.sh`, `.github/actions/**`                               |
-| `free-policy.yml`  | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）                            | `Free-only policy check`             | なし（常時実行）                                              |
-| `pinact.yml`       | Action 参照のアノテーション整合 + リリース経過日数（cooldown）                    | `pinact (action pin verification)`   | `.github/workflows/**`, `.github/actions/**`, `.pinact.yaml`, `.pinact.yml`, `.github/pinact.yaml`, `.github/pinact.yml` |
-| `typos.yml`        | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                | なし（常時実行）                                              |
-| `semantic-pr.yml`  | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)` | なし（`pull_request` のみ）                                   |
-| `lychee.yml`       | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`         | `**/*.md`, `**/*.html`, `lychee.toml`                         |
+| ワークフロー            | 内容                                                                              | job 名 (= check context)               | paths フィルタ推奨                                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `gitleaks.yml`          | シークレット漏洩スキャン（全ブランチ履歴）                                        | `Scan for leaked secrets`              | なし（常時実行）                                                                                                         |
+| `trivy.yml`             | 脆弱性・設定ミス・シークレットの fs スキャン                                      | `Trivy filesystem scan`                | なし（常時実行）                                                                                                         |
+| `zizmor.yml`            | GitHub Actions ワークフローのセキュリティ監査                                     | `zizmor`                               | なし（常時実行）                                                                                                         |
+| `actionlint.yml`        | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止                    | `actionlint`                           | `.github/workflows/**`, `.github/actions/**`                                                                             |
+| `markdownlint.yml`      | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`）                    | `markdownlint-cli2`                    | `**/*.md`                                                                                                                |
+| `hadolint.yml`          | Dockerfile lint（Dockerfile が無ければスキップ）                                  | `Hadolint (Dockerfile lint)`           | `**/Dockerfile*`                                                                                                         |
+| `shellcheck.yml`        | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)`       | `**/*.sh`, `.github/actions/**`                                                                                          |
+| `free-policy.yml`       | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）                            | `Free-only policy check`               | なし（常時実行）                                                                                                         |
+| `dependency-review.yml` | PR で追加・更新される依存の脆弱性とライセンスを判定（PR 限定）                    | `dependency-review (new dependencies)` | なし（`pull_request` のみ）                                                                                              |
+| `pinact.yml`            | Action 参照のアノテーション整合 + リリース経過日数（cooldown）                    | `pinact (action pin verification)`     | `.github/workflows/**`, `.github/actions/**`, `.pinact.yaml`, `.pinact.yml`, `.github/pinact.yaml`, `.github/pinact.yml` |
+| `typos.yml`             | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                  | なし（常時実行）                                                                                                         |
+| `semantic-pr.yml`       | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)`   | なし（`pull_request` のみ）                                                                                              |
+| `lychee.yml`            | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`           | `**/*.md`, `**/*.html`, `lychee.toml`                                                                                    |
 
 ## 提供 composite action
 
@@ -100,13 +101,66 @@ jobs:
 - 参照は **full-length commit SHA でピン留め**すること（actionlint が強制する）。更新は各リポジトリの Dependabot (`github-actions` ecosystem) が自動でPRを出す
 - トリガー・concurrency・permissions は**スタブ側**で定義する（本リポジトリの各ワークフローに付いている `push` / `pull_request` トリガーは本リポジトリ自身のセルフテスト用）
 
+## `dependency-review.yml`（新規依存のゲート）
+
+### `trivy.yml` との役割分担（重複ではない）
+
+|            | `trivy.yml`                                                | `dependency-review.yml`                 |
+| ---------- | ---------------------------------------------------------- | --------------------------------------- |
+| 走査範囲   | ツリー全体（既存の依存を含む）                             | PR の差分で**追加・更新された依存**のみ |
+| 判定       | `--exit-code 0` で**報告のみ**（SARIF を Security タブへ） | 閾値以上なら**PR を落とす**             |
+| ライセンス | 見ない                                                     | `deny-licenses` で判定できる            |
+| 目的       | 今あるものの可視化                                         | これから増やすものの遮断                |
+
+`trivy.yml` を報告のみにしているのは、既存の負債で CI を赤くしないための意図的な設定である。
+その結果、**脆弱な依存の追加を止める検査は現状ひとつも無い**。本ワークフローがその役割を担う。
+
+GitHub Actions も依存グラフの対象に含まれるため、`package.json` などのマニフェストを持たない
+リポジトリでも `uses:` の更新が検査対象になる。
+
+### トリガーの制約
+
+本 Action は base と head の比較を前提とするため、**`pull_request` 以外では動かない**。
+スタブのトリガーは `pull_request` のみにすること（`push` を足すと失敗する）。
+
+```yaml
+name: dependency-review
+
+on:
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    uses: genzouw/ci-workflows/.github/workflows/dependency-review.yml@<full-commit-SHA> # vX.Y.Z
+```
+
+### 閾値と例外
+
+| 入力               | 既定             | 用途                                     |
+| ------------------ | ---------------- | ---------------------------------------- |
+| `fail_on_severity` | `high`           | `low` / `moderate` / `high` / `critical` |
+| `deny_licenses`    | 空（検査しない） | 例: `AGPL-3.0, GPL-3.0`                  |
+| `allow_ghsas`      | 空               | 修正版が無い等の暫定例外                 |
+| `config_file`      | 空               | 細かい制御は設定ファイルで行う           |
+
+PR へのサマリーコメント投稿（`comment-summary-in-pr`）は `pull-requests: write` を要するため、
+最小権限を保つ目的で無効にしている。結果は job summary で読む。
+
 ## `pinact.yml`（Action 参照の cooldown とアノテーション検証）
 
 `actionlint.yml` の「Reject non-SHA action references」は `uses:` が 40 桁 SHA であることしか見ない。
 SHA ピン留めを通過したあとに残る次の 2 つの穴を、`pinact.yml` が GitHub API 経由で塞ぐ。
 
 | 穴                 | 具体例                                                                | `pinact.yml` の検査                                            |
-| ------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| ------------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | アノテーション詐称 | `@<悪意のある SHA> # v1.2.3` と書けば、レビューでは `v1.2.3` に見える | `--verify`: コメントのタグが指す SHA と実際の pin が一致するか |
 | 取り込みが早すぎる | 上流が侵害された直後のリリースを SHA 固定で取り込む                   | `--min-age`: pin した commit が指定日数より古いか              |
 
@@ -144,7 +198,7 @@ updates:
 ### 終了コード
 
 | コード | 意味                                                                             | 対処                                                                                                                       |
-| ------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| ------ | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | 1      | SHA でピン留めされていない                                                       | `pinact run` で SHA へ置換する                                                                                             |
 | 2      | 自動修正不可（アノテーションと SHA の不一致、または cooldown 未経過）            | アノテーション不一致なら `pinact run` でコメントを実際の SHA に合わせる。cooldown 未経過なら指定日数が経過してから取り込む |
 | 3      | GitHub API エラー・CLI フラグの不正な組み合わせなど、pinact 自体の予期しない失敗 | ワークフローのログを確認し、pinact 自体の実行エラーに対処する                                                              |
