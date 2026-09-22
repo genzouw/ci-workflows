@@ -14,8 +14,8 @@ files:
   - pattern: .github/actions/*/action.yaml
 
 # 上流の新リリースを即時に取り込まない (cooldown)。
-# 値は .github/dependabot.yml の `cooldown.default-days` と揃えること。
-# 揃っていないと、Dependabot が出した更新 PR が pinact で落ちる / その逆が起きる。
+# 値は .github/renovate.json の `minimumReleaseAge` と揃えること。
+# 揃っていないと、Renovate が出した更新 PR が pinact で落ちる / その逆が起きる。
 min_age:
   value: 7
   always: true

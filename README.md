@@ -29,7 +29,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 `gitleaks` のバージョンはこの action の `inputs.version` の既定値を単一の信頼できる情報源 (Single Source of Truth) とする。
 `gitleaks.yml` (本リポジトリの reusable workflow) と、呼び出し側リポジトリが独自に持つ gitleaks 実行ワークフローの
 両方がこの action を経由することで、`run:` ブロック内に `GITLEAKS_VERSION` を二重管理する状態を解消する
-（`run:` 内の文字列は Dependabot の更新対象外だが、`uses:` の SHA ピンは対象になる）。
+（`run:` 内の文字列は Renovate の既定では更新対象外だが、`uses:` の SHA ピンは対象になる）。
 
 ```yaml
 - name: Setup gitleaks
@@ -40,7 +40,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 ```
 
 - バージョンを一時的に固定したい場合のみ `with: { version: '8.30.1' }` で上書きする。通常は指定しない
-- 参照は reusable workflow と同じく **full-length commit SHA でピン留め**すること。更新は Dependabot (`github-actions` ecosystem) が自動でPRを出す
+- 参照は reusable workflow と同じく **full-length commit SHA でピン留め**すること。更新は Renovate (`github-actions` manager) が自動でPRを出す
 
 ## composite action（`.github/actions/**`）の検証範囲
 
@@ -98,7 +98,7 @@ jobs:
     uses: genzouw/ci-workflows/.github/workflows/gitleaks.yml@<full-commit-SHA> # vX.Y.Z
 ```
 
-- 参照は **full-length commit SHA でピン留め**すること（actionlint が強制する）。更新は各リポジトリの Dependabot (`github-actions` ecosystem) が自動でPRを出す
+- 参照は **full-length commit SHA でピン留め**すること（actionlint が強制する）。更新は各リポジトリの Renovate (`github-actions` manager) が自動でPRを出す
 - トリガー・concurrency・permissions は**スタブ側**で定義する（本リポジトリの各ワークフローに付いている `push` / `pull_request` トリガーは本リポジトリ自身のセルフテスト用）
 
 ## `dependency-review.yml`（新規依存のゲート）
@@ -179,21 +179,23 @@ SHA ピン留めを通過したあとに残る次の 2 つの穴を、`pinact.ym
 - 既定は **7 日**。スタブ側で `with: { min_age: 3 }` のように上書きできる（`0` で経過日数チェックを無効化）
 - 呼び出し元に `.pinact.yaml` / `.github/pinact.yaml` がある場合、`--min-age` は渡さず設定ファイルを優先する
   （CLI フラグは設定ファイルの `rules[].min_age` より優先されるため、渡すと Action 単位の例外指定を握り潰す）
-- **`.github/dependabot.yml` の `cooldown.default-days` と同じ値にすること。**
-  値がずれていると、Dependabot が出した更新 PR が `pinact` の min-age で落ち続ける
+- **`.github/renovate.json` の `minimumReleaseAge` と同じ値にすること。**
+  値がずれていると、Renovate が出した更新 PR が `pinact` の min-age で落ち続ける
 
-```yaml
-# .github/dependabot.yml
-updates:
-  - package-ecosystem: 'github-actions'
-    cooldown:
-      default-days: 7 # .pinact.yaml の min_age.value と揃える
+```json
+// .github/renovate.json
+{
+  "minimumReleaseAge": "7 days"
+}
 ```
 
 > [!NOTE]
-> Dependabot は頻繁にリリースされる Action について「最新リリースが cooldown 未経過なら更新を行わない」
-> 挙動が報告されている（[dependabot-core#13691](https://github.com/dependabot/dependabot-core/issues/13691)）。
-> 更新が止まって見える場合はこれを疑うこと。
+> `minimumReleaseAge` を満たさない更新を、Renovate は PR にせず保留する。
+> Dependency Dashboard の Issue に「Pending Status Checks」として並ぶので、
+> 更新が止まって見える場合はまずそこを確認すること。
+> なお脆弱性修正は `vulnerabilityAlerts` で `minimumReleaseAge: null` にしてあるため保留されない。
+> この場合だけは `pinact` の min-age に引っかかり得るので、必要なら `.pinact.yaml` の
+> `rules[].min_age` で当該 Action を個別に緩める。
 
 ### 終了コード
 
@@ -289,9 +291,11 @@ jobs:
 ```
 
 > [!NOTE]
-> Dependabot の PR タイトルは、`.github/dependabot.yml` の `commit-message.prefix` を
-> 設定していないと `Bump X from A to B` になり本検査で落ちる。
-> 展開先では `prefix: "ci"` / `include: "scope"` の設定を先に入れること。
+> Renovate の PR タイトルは、`semanticCommits` が `"disabled"` だと
+> `Update X to vY` になり本検査で落ちる。既定値の `"auto"` はコミット履歴からの
+> 判定で、履歴の内容によっては `"disabled"` と判定される。
+> 展開先の `.github/renovate.json` では `"semanticCommits": "enabled"` を明示し、
+> `github-actions` manager に `"semanticCommitType": "ci"` を指定すること。
 
 ## `lychee.yml`（リンク切れ検出）
 
@@ -391,4 +395,4 @@ jobs:
 
 ## リリース
 
-タグ `vX.Y.Z` を打つ。呼び出し側は Dependabot がタグに対応する SHA へ自動更新する。
+タグ `vX.Y.Z` を打つ。呼び出し側は Renovate がタグに対応する SHA へ自動更新する。

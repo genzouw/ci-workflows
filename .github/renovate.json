@@ -1,0 +1,82 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "semanticCommits": "enabled",
+  "semanticCommitScope": "deps",
+  "timezone": "Asia/Tokyo",
+  "schedule": [
+    "* * * * 1"
+  ],
+  "minimumReleaseAge": "7 days",
+  "prConcurrentLimit": 5,
+  "labels": [
+    "dependencies"
+  ],
+  "reviewers": [
+    "genzouw"
+  ],
+  "vulnerabilityAlerts": {
+    "description": [
+      "脆弱性修正は minimumReleaseAge と schedule の対象外にして即時 PR にする。",
+      "Dependabot の cooldown が security updates に効かなかったのと同じ挙動を保つため。"
+    ],
+    "minimumReleaseAge": null,
+    "schedule": [],
+    "addLabels": [
+      "security"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": [
+        "依存更新はすべて chore プレフィックスで出す。",
+        "config:recommended に含まれる :semanticPrefixFixDepsChoreOthers は本番依存を fix にするが、",
+        "fix は release 生成ツールがリリース対象として扱うため、Dependabot 時代と同じ chore に固定する。"
+      ],
+      "matchPackageNames": [
+        "*"
+      ],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "GitHub Actions の更新のプレフィックスとラベル (Dependabot の commit-message.prefix と同じ)",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "semanticCommitType": "ci",
+      "addLabels": [
+        "github-actions"
+      ]
+    },
+    {
+      "description": [
+        "markdownlint-cli2-action v23 以降は Node.js 24 ランタイムを要求する。",
+        "GitHub Actions runner が node24 を正式サポートするまで major を止める。"
+      ],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "DavidAnson/markdownlint-cli2-action"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": [
+        "GitHub Actions の更新は 1 PR にまとめる。",
+        "本リポジトリは reusable workflow 群で、同じ Action を複数ファイルで参照しているため、",
+        "まとめないと同一バージョンの更新が複数 PR に分割される。"
+      ],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github-actions"
+    }
+  ]
+}
