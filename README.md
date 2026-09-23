@@ -424,13 +424,19 @@ on:
     paths:
       - '**/*.ts'
       - '**/*.tsx'
+      - '**/*.mts'
+      - '**/*.cts'
       - '**/*.js'
       - '**/*.jsx'
       - '**/*.mjs'
       - '**/*.cjs'
       - '**/*.vue'
+      - '**/*.svelte'
       - '**/package.json'
       - '.fallowrc.json'
+      - '.fallowrc.jsonc'
+      - 'fallow.toml'
+      - '.fallow.toml'
       - '.github/workflows/fallow.yml'
 
 concurrency:
