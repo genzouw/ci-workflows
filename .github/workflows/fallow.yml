@@ -81,7 +81,67 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Detect TypeScript / JavaScript sources
+        id: detect
+        run: |
+          set -euo pipefail
+          # TS/JS を持たないリポジトリから呼ばれても落ちないようにする
+          # (hadolint.yml / shellcheck.yml と同じ「対象が無ければスキップ」方式)。
+          # 本リポジトリ自身のセルフテストもこの分岐でスキップされる。
+          mapfile -t sources < <(
+            git ls-files \
+              '*.ts' '*.tsx' '*.mts' '*.cts' \
+              '*.js' '*.jsx' '*.mjs' '*.cjs' \
+              '*.vue' '*.svelte' || true
+          )
+          if [ "${#sources[@]}" -eq 0 ]; then
+            echo "TypeScript / JavaScript のソースが見つかりませんでした。スキップします。"
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "解析対象候補: ${#sources[@]} ファイル"
+          echo 'found=true' >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+
+          # node_modules が無いと fallow は package の exports / conditional exports を
+          # 読めず、「import と依存が誤報告されうる」と自ら警告する。実測でも dice-api で
+          # 未解決 import の誤検知が 1 件増えた (dead-code 5 件 -> 6 件) ため、解析前に
+          # 依存を入れる。
+          #
+          # インストーラを npm に一本化しているのは、Node.js と npm だけが runner に
+          # プリインストールされているため。bun / pnpm を入れるには公式 Action か
+          # 野良スクリプトが要るが、前者は許可リスト (selected) に阻まれ、後者は
+          # 供給網リスクを持ち込む。bun.lock しか無いリポジトリでは lockfile どおりの
+          # 解決にはならないが、fallow が必要とするのは各パッケージの exports 情報で
+          # あってバージョンの厳密一致ではない。
+          #
+          # --ignore-scripts で postinstall を実行しない。依存を「読む」だけが目的で、
+          # ビルドも実行もしないため、任意コード実行の面を広げる必要がない。
+          if [ ! -f package.json ]; then
+            echo "package.json がありません。依存のインストールをスキップします。"
+            exit 0
+          fi
+
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json を検出しました。npm ci を実行します。"
+            install_cmd=(npm ci --ignore-scripts --no-audit --no-fund)
+          else
+            echo "npm の lockfile がありません。npm install で近似します。"
+            install_cmd=(npm install --ignore-scripts --no-audit --no-fund)
+          fi
+
+          if ! "${install_cmd[@]}"; then
+            # 依存が無くても fallow は動くが、解析精度は落ちる。黙って続けると
+            # 「精度の落ちた解析が緑だった」という状態を見分けられなくなるため警告を残す。
+            echo "::warning::依存のインストールに失敗しました。node_modules 無しで解析を続行しますが、import と依存が誤報告される可能性があります。"
+          fi
+
       - name: Audit changed files
+        if: steps.detect.outputs.found == 'true'
         env:
           # CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が
           # 再現性を保つ唯一の手段になる。この既定値が単一の信頼できる情報源 (SSoT)。
@@ -95,21 +155,6 @@ jobs:
           ENFORCE: ${{ inputs.fail_on_issues }}
         run: |
           set -euo pipefail
-
-          # TS/JS を持たないリポジトリから呼ばれても落ちないようにする
-          # (hadolint.yml / shellcheck.yml と同じ「対象が無ければスキップ」方式)。
-          # 本リポジトリ自身のセルフテストもこの分岐でスキップされる。
-          mapfile -t sources < <(
-            git ls-files \
-              '*.ts' '*.tsx' '*.mts' '*.cts' \
-              '*.js' '*.jsx' '*.mjs' '*.cjs' \
-              '*.vue' '*.svelte' || true
-          )
-          if [ "${#sources[@]}" -eq 0 ]; then
-            echo "TypeScript / JavaScript のソースが見つかりませんでした。スキップします。"
-            exit 0
-          fi
-          echo "解析対象候補: ${#sources[@]} ファイル"
 
           # base が取れない呼ばれ方をしたときは、CLI 側の merge-base 自動検出に委ねる。
           args=(audit --format human)
