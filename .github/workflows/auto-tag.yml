@@ -99,14 +99,12 @@ jobs:
           # ワークフローと composite action だけ)。README だけの更新でタグ番号を
           # 消費しないようにする。既存タグが無い初回リリースでも、空のツリーを
           # 起点に同じ判定を行う。
-          mapfile -t changed < <(
-            git diff --name-only "${diff_base}" HEAD -- '.github/workflows' '.github/actions' || true
-          )
-          if [ "${#changed[@]}" -eq 0 ]; then
+          changed="$(git diff --name-only "${diff_base}" HEAD -- '.github/workflows' '.github/actions')"
+          if [ -z "${changed}" ]; then
             echo "${latest:-<初回>} 以降、CI 定義に変更がありません。タグ付けをスキップします。"
             exit 0
           fi
-          printf '変更された CI 定義: %s\n' "${changed[@]}"
+          printf '変更された CI 定義:\n%s\n' "${changed}"
 
           # squash merge であれば直近タグ以降のコミットは常に1件のはず。本リポジトリは
           # Rebase and merge も許可されており (Settings > General で確認可能)、これを
