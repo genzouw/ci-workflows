@@ -1,0 +1,253 @@
+name: fallow
+
+# TypeScript / JavaScript の「その PR が変更したファイル」だけを見て、未使用コード・
+# 重複・複雑度を判定する品質ゲート。
+#
+# 既存の lint との違い:
+#   - typos.yml / markdownlint.yml は綴りと Markdown の構造しか見ない
+#   - trivy.yml / gitleaks.yml は脆弱性とシークレットであり、コード品質は見ない
+#   - 各リポジトリの ESLint は「1 ファイル内で閉じた規則」しか見ないため、
+#     ファイルをまたぐ未使用 export・循環依存・コピペ重複は検出できない
+#   fallow は依存グラフを組み立てて到達不能なコードを判定するため、守備範囲が重ならない。
+#
+# なぜ `audit` なのか (フルスキャンにしない理由):
+#   導入時点の実測で、対象リポジトリはいずれも既存コードに指摘を持っている
+#   (hyakuninissyu: dead-code 75 件 / toique: dead-code 12 + 重複 16 / monopo: 複雑度 33)。
+#   フルスキャンを赤検知にすると、その PR と無関係な負債で全 PR が落ちて機能しない。
+#   audit は判定対象を「変更ファイル」かつ「その変更で新たに導入された指摘」(既定の
+#   --gate new-only) に限定するため、既存の負債を無視して「これから増えるもの」だけを
+#   止められる。dependency-review.yml と同じ思想で、trivy.yml (報告のみ) と対になる。
+#
+# なぜ公式 Action (fallow-rs/fallow) を使わず CLI を直接実行するのか:
+#   本リポジトリと配布先リポジトリはいずれも Actions の許可リストが "selected"
+#   (github_owned + verified + 個別許可パターン) に設定されている。許可されていない
+#   サードパーティ Action を参照したワークフローは、実行される前に startup_failure で
+#   落ちる (check context を報告しないため PR のチェック一覧にも現れない)。
+#   Action を使うには全リポジトリの許可リスト変更が必要になるうえ、許可リストの管理は
+#   genzouw.com の Terraform 側にあり、CI の定義とは別の場所で二重管理になる。
+#   CLI は npm から取得してローカルで完結するため、この制約を受けない。
+#   gitleaks / hadolint を公式バイナリの直接実行にしているのと同じ判断。
+#
+# 課金について (AGENTS.md 1 章):
+#   静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも
+#   必要としない。有料なのは本番トレースを取り込む Fallow Runtime だけで、本
+#   ワークフローはこれを使わない。CLI の直接実行には外部 SaaS への通信も伴わない。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  # audit は base との比較を前提とするため、pull_request 以外では動かさない。
+  workflow_call:
+    inputs:
+      version:
+        description: "使用する fallow CLI のバージョン。空なら本ワークフローの既定値を使う。"
+        type: string
+        required: false
+        default: ""
+      fail_on_issues:
+        description: "変更ファイルに新たな指摘があったとき PR を落とすか。false なら報告のみ (段階導入用)。"
+        type: boolean
+        required: false
+        default: true
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.mts"
+      - "**/*.cts"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+      - "**/*.cjs"
+      - "**/*.vue"
+      - "**/*.svelte"
+      - "**/package.json"
+      - ".fallowrc.json"
+      - ".fallowrc.jsonc"
+      - "fallow.toml"
+      - ".fallow.toml"
+      - ".github/workflows/fallow.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fallow:
+    name: fallow (changed-file quality gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # audit は base との差分を見るため、履歴全体が必要。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect TypeScript / JavaScript sources
+        id: detect
+        run: |
+          set -euo pipefail
+          # TS/JS を持たないリポジトリから呼ばれても落ちないようにする
+          # (hadolint.yml / shellcheck.yml と同じ「対象が無ければスキップ」方式)。
+          # 本リポジトリ自身のセルフテストもこの分岐でスキップされる。
+          mapfile -t sources < <(
+            git ls-files \
+              '*.ts' '*.tsx' '*.mts' '*.cts' \
+              '*.js' '*.jsx' '*.mjs' '*.cjs' \
+              '*.vue' '*.svelte' || true
+          )
+          if [ "${#sources[@]}" -eq 0 ]; then
+            echo "TypeScript / JavaScript のソースが見つかりませんでした。スキップします。"
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "解析対象候補: ${#sources[@]} ファイル"
+          echo 'found=true' >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+
+          # node_modules が無いと fallow は package の exports / conditional exports を
+          # 読めず、「import と依存が誤報告されうる」と自ら警告する。実測でも dice-api で
+          # 未解決 import の誤検知が 1 件増えた (dead-code 5 件 -> 6 件) ため、解析前に
+          # 依存を入れる。
+          #
+          # インストーラを npm に一本化しているのは、Node.js と npm だけが runner に
+          # プリインストールされているため。bun / pnpm を入れるには公式 Action か
+          # 野良スクリプトが要るが、前者は許可リスト (selected) に阻まれ、後者は
+          # 供給網リスクを持ち込む。bun.lock しか無いリポジトリでは lockfile どおりの
+          # 解決にはならないが、fallow が必要とするのは各パッケージの exports 情報で
+          # あってバージョンの厳密一致ではない。
+          #
+          # --ignore-scripts で postinstall を実行しない。依存を「読む」だけが目的で、
+          # ビルドも実行もしないため、任意コード実行の面を広げる必要がない。
+          if [ ! -f package.json ]; then
+            echo "::warning::package.json がありません。node_modules 無しで解析を続行しますが、import と依存が誤報告される可能性があります。"
+            exit 0
+          fi
+
+          installed=0
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json を検出しました。npm ci を実行します。"
+            if npm ci --ignore-scripts --no-audit --no-fund; then
+              installed=1
+            else
+              # lockfile と package.json がずれていると npm ci は EUSAGE で必ず落ちる
+              # (dice-api が実際にこの状態)。ここで諦めると、誤検知が出やすい
+              # リポジトリほど node_modules 無しで解析されることになるため、
+              # lockfile を無視してでも依存を入れる方へ倒す。
+              echo "::warning::npm ci に失敗しました。package.json と package-lock.json が同期していない可能性があります。npm install にフォールバックします。"
+            fi
+          fi
+
+          if [ "${installed}" -eq 0 ]; then
+            if [ ! -f package-lock.json ]; then
+              echo "npm の lockfile がありません。npm install で近似します。"
+            fi
+            if ! npm install --ignore-scripts --no-audit --no-fund; then
+              # node_modules 無しの解析は誤検知が増えることが実測で分かっている
+              # (dice-api で dead-code 5 件 -> 6 件)。そのまま audit を走らせると
+              # 「根拠の弱い赤」で無関係な PR を落とすことになるため、判定そのものを
+              # 行わずに終了する。exit 2 は audit の *) と同じ「fallow 自体の失敗」の
+              # 扱いで、fail_on_issues とは無関係に常に失敗する。
+              echo "::error::依存のインストールに失敗しました。node_modules 無しの解析は import と依存を誤報告するため、判定を行わずに終了します。"
+              exit 2
+            fi
+          fi
+
+      - name: Audit changed files
+        if: steps.detect.outputs.found == 'true'
+        env:
+          # CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が
+          # 再現性を保つ唯一の手段になる。この既定値が単一の信頼できる情報源 (SSoT)。
+          # npm ecosystem のマニフェストではないため Dependabot の更新対象外で、
+          # 更新は手動で行う。手動更新のときに守ること:
+          #   1. 公開から 7 日を越えたバージョンだけを選ぶ。本リポジトリは
+          #      .github/dependabot.yml の cooldown.default-days と .pinact.yaml の
+          #      min_age.value で「公開直後の上流を取り込まない」を 7 日と定めているが、
+          #      ここは env: の文字列なのでどちらの機械的検査も届かない。守れるのは人の目だけ。
+          #   2. README の「入力」表と「CLI バージョンの更新は手動」節も併せて直す。
+          FALLOW_VERSION: ${{ inputs.version || '3.26.0' }}
+          # ${{ }} を run: に直接展開せず env 経由で渡す (template injection 対策)。
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # 明示的に false を渡されたときだけ報告のみに落とし、それ以外は落とす側へ倒す。
+          ENFORCE: ${{ inputs.fail_on_issues }}
+          # audit の JSON を中間成果物として置く先。ここから github-annotations と
+          # github-summary を描画するため、解析自体は 1 回で済む。
+          RESULTS_JSON: ${{ runner.temp }}/fallow-audit.json
+        run: |
+          set -euo pipefail
+
+          # audit は base との比較を前提にした設計なので、比較対象が取れない呼び出しは
+          # 設定ミスとして落とす。CLI の merge-base 自動検出に委ねると、main 上での実行で
+          # merge-base(origin/main, HEAD) が HEAD 自身になり、変更ファイル 0 件のまま
+          # audit が pass してジョブが緑になる (= 起動しているように見えて何も検査して
+          # いない状態)。これを防いでいるのが README の散文だけでは、スタブが人手で
+          # コピーされるうちに崩れる。
+          if [ -z "${BASE_SHA}" ]; then
+            echo "::error::base の SHA を取得できませんでした。fallow.yml は pull_request から呼び出してください (README「トリガーの制約」)。"
+            exit 2
+          fi
+
+          # 解析は 1 回だけ走らせて JSON を中間成果物にし、そこから GitHub の 2 つの
+          # 表示面を描画する。--format human は標準出力に流すだけなので、赤くなった
+          # 開発者はジョブログを遡らないと指摘内容に辿り着けない。fail_on_issues: false
+          # (段階導入用) ではジョブが緑のまま結果がログの奥に埋まり、「報告のみ」が
+          # 誰にも報告されない状態になる。
+          args=(audit --changed-since "${BASE_SHA}" --format json --output-file "${RESULTS_JSON}")
+
+          # 取得の可否を audit 本体とは別に確かめる。npx はパッケージ解決に失敗した
+          # ときも exit 1 を返すため、そのまま audit を走らせると「fallow が指摘を
+          # 検出した」と区別がつかない。fail_on_issues: false の構成では、一度も
+          # fallow が動いていないのに「指摘を検出したが成功扱いにする」という事実と
+          # 異なる警告とともに緑になってしまう。
+          # 取得に成功していれば npx のキャッシュに載るため、続く audit の実行では
+          # ダウンロードは発生しない。
+          # --ignore-scripts: 取得したパッケージの postinstall を実行しない。CLI を
+          # 1 回起動するだけが目的で、fallow と @fallow-cli/* は postinstall を持たない
+          # ため、任意コード実行の面を広げずに済む。外部バイナリを取る既存 6 経路が
+          # .sha256 で照合しているのに対し、npm 経由では取得の完全性を自前で検証できず、
+          # レジストリの整合性と fallow 自身のバイナリ署名検証
+          # (--version が `verified: yes ... signed` を出す) に委ねている。
+          if ! npx --yes --ignore-scripts "fallow@${FALLOW_VERSION}" --version; then
+            echo "::error::fallow ${FALLOW_VERSION} の取得に失敗しました。バージョン指定または npm レジストリを確認してください。"
+            exit 2
+          fi
+
+          status=0
+          npx --yes --ignore-scripts "fallow@${FALLOW_VERSION}" "${args[@]}" || status=$?
+
+          # 表示面の描画は判定結果に影響させない (|| true)。github-annotations は
+          # 変更行に直接アノテーションを出し、github-summary はジョブサマリーに表を出す。
+          # どちらもログベースなので、write 権限を持たない fork PR でも描画され、
+          # permissions: contents: read のまま使える。
+          if [ -f "${RESULTS_JSON}" ]; then
+            npx --yes --ignore-scripts "fallow@${FALLOW_VERSION}" \
+              report --from "${RESULTS_JSON}" --format github-annotations || true
+            npx --yes --ignore-scripts "fallow@${FALLOW_VERSION}" \
+              report --from "${RESULTS_JSON}" --format github-summary >> "${GITHUB_STEP_SUMMARY}" || true
+          fi
+
+          # 終了コードの意味: 0=pass / 1=findings または fail verdict /
+          # それ以外 (2 以上) =fallow 自体の失敗。fallow が定義しているのは 0〜8 と
+          # 10〜13 だが、下の case は *) で 2 以上を一括で落とすため個別に列挙しない。
+          # (https://github.com/fallow-rs/fallow#output-and-exit-codes)
+          case "${status}" in
+            0)
+              exit 0
+              ;;
+            1)
+              if [ "${ENFORCE}" = "false" ]; then
+                echo "::warning::fallow audit が指摘を検出しましたが、fail_on_issues: false のため job は成功扱いにします。"
+                exit 0
+              fi
+              exit 1
+              ;;
+            *)
+              # 指摘の検出ではなく fallow 自体の失敗。fail_on_issues とは無関係に落とす。
+              echo "::error::fallow が予期しない終了コード ${status} で終了しました。"
+              exit "${status}"
+              ;;
+          esac
