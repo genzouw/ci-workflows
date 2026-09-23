@@ -87,11 +87,24 @@ jobs:
               exit 0
             fi
             printf '変更された CI 定義: %s\n' "${changed[@]}"
+
+            # squash merge であれば直近タグ以降のコミットは常に1件のはず。本リポジトリは
+            # Rebase and merge も許可されており (Settings > General で確認可能)、これを
+            # 選ぶと main には各コミット本来のメッセージがそのまま入る。semantic-pr.yml は
+            # PR タイトル (または単一コミット PR のコミットメッセージ) しか検査しないため、
+            # 複数コミットの PR を rebase merge すると Conventional Commits 形式が保証され
+            # ないメッセージが下の bump 判定に混入し得る。件数が1件を超える場合は警告して
+            # 人が算出結果を確認できるようにする (自動では塞がない)。
+            commit_count="$(git rev-list --count "${range[@]}")"
+            if [ "${commit_count}" -gt 1 ]; then
+              echo "::warning::直近タグ以降に ${commit_count} 件のコミットがあります。Rebase merge 等で複数コミットが一度に main へ入った場合、Conventional Commits 形式が保証されないコミットメッセージが bump 判定に混入している可能性があります。算出された bump 種別 (下記) を確認してください。"
+            fi
           fi
 
           # Conventional Commits から bump 種別を決める。PR タイトルの規約準拠は
           # semantic-pr.yml が別途強制しているため、squash merge のコミット件名は
-          # 必ず <type>[optional scope][!]: <description> の形になる。
+          # 必ず <type>[optional scope][!]: <description> の形になる (rebase merge
+          # 時の注意点は直前の commit_count 警告を参照)。
           messages="$(git log "${range[@]}" --format='%B')"
 
           bump="patch"
