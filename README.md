@@ -397,6 +397,24 @@ jobs:
 
 `typos.yml` は綴り、`markdownlint.yml` は Markdown 構造、`trivy.yml` / `gitleaks.yml` は脆弱性とシークレットを見るもので、いずれもコード品質は扱わない。
 
+### knip を持つリポジトリは当面の配布対象から外す
+
+上の比較は ci-workflows 配下の既存ワークフローと「各リポジトリの ESLint」を見たもので、配布先リポジトリの実体を確認すると **2 本が既に knip を持っている**。
+
+| リポジトリ      | knip                                                       |
+| --------------- | ---------------------------------------------------------- |
+| `toique`        | `.github/workflows/knip.yml` / `package.json` に `knip` 依存 |
+| `hyakuninissyu` | 同上 + `knip.jsonc`                                          |
+
+knip は未使用 export・到達不能ファイル・未使用依存を検出するツールで、fallow の dead-code 検出と守備範囲が正面から重なる。重なったまま両方を回すと困ることが 2 つある。
+
+1. **誤検知の除外設定が二重管理になる。** knip の除外は `knip.jsonc` の `entry` / `project` / `ignoreDependencies` に積み上がっているが、fallow はこのファイルを読まない。同じ「これは未使用ではない」という事実を 2 つの設定ファイルで維持することになる
+2. **両者の判定が既に食い違っている。** 上表のとおり hyakuninissyu はフルスキャンで dead-code 75 件だが、knip は緑のままである。この 75 件が本物の負債なのか `knip.jsonc` で意図的に除外されている対象なのかを切り分けないまま配布すると、開発者は 2 つのツールの言い分を毎 PR で突き合わせることになる
+
+**判断: `toique` / `hyakuninissyu` は当面の配布対象から外す。** 配布先は knip を持たない `monopo` / `kakezan-manabo` / `dice-api` とする。将来 fallow へ寄せる場合は `knip.jsonc` の除外を fallow の設定へ移す作業（`fallow migrate` が knip 設定の変換を持つ）と、上記 75 件の切り分けを済ませてから、knip の廃止と同時に行う。
+
+なお AGENTS.md 1.1 の「既に導入済みのツールと機能が重複する追加」は ci-workflows 自身を対象にした条項だが、reusable workflow は配布した瞬間に配布先へ実質同じ状況を生むため、ここでも同じ基準で判断している。
+
 ### なぜ `command: audit`（変更ファイル限定）なのか
 
 導入時点の実測で、対象リポジトリはいずれも既存コードに指摘を持っている。
