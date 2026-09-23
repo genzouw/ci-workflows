@@ -82,11 +82,13 @@ jobs:
           if [ -z "${latest}" ]; then
             echo "既存のタグがありません。全履歴を対象に判定します。"
             base="v0.0.0"
-            range=()
+            # git log は引数無しで暗黙に HEAD を対象にするが、git rev-list --count は
+            # 引数無しでは動作しない ("usage: git rev-list ... <commit>...") ため、
+            # 明示的に HEAD を渡す。
+            range=(HEAD)
             # git diff はコミット範囲ではなく比較対象の tree-ish を2つ取るため、
             # 「タグがまだ無い」を「空のツリーとの比較」として表現できる。これにより
-            # 初回リリースでも CI 定義変更の有無を判定できる (range=() は git log /
-            # git rev-list 側で「HEAD からの全履歴」を意味するのでそのまま使う)。
+            # 初回リリースでも CI 定義変更の有無を判定できる。
             diff_base="$(git hash-object -t tree /dev/null)"
           else
             echo "直近のタグ: ${latest}"
