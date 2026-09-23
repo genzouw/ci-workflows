@@ -177,6 +177,18 @@ jobs:
             echo "::warning::base の SHA を取得できませんでした。CLI の merge-base 自動検出にフォールバックします。"
           fi
 
+          # 取得の可否を audit 本体とは別に確かめる。npx はパッケージ解決に失敗した
+          # ときも exit 1 を返すため、そのまま audit を走らせると「fallow が指摘を
+          # 検出した」と区別がつかない。fail_on_issues: false の構成では、一度も
+          # fallow が動いていないのに「指摘を検出したが成功扱いにする」という事実と
+          # 異なる警告とともに緑になってしまう。
+          # 取得に成功していれば npx のキャッシュに載るため、続く audit の実行では
+          # ダウンロードは発生しない。
+          if ! npx --yes "fallow@${FALLOW_VERSION}" --version; then
+            echo "::error::fallow ${FALLOW_VERSION} の取得に失敗しました。バージョン指定または npm レジストリを確認してください。"
+            exit 2
+          fi
+
           status=0
           npx --yes "fallow@${FALLOW_VERSION}" "${args[@]}" || status=$?
 

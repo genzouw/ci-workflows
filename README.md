@@ -506,6 +506,8 @@ CLI は npm 経由で取得されるため SHA ピン留めができず、バー
 
 指摘の検出と fallow 自体の故障を区別している。区別しないと、CLI が壊れて何も解析していない状態が「指摘なし」と同じ緑になる。
 
+ただし `npx` は**パッケージの解決に失敗したときも exit 1 を返す**ため、終了コードだけでは「指摘あり」と区別できない。`fail_on_issues: false` の構成だと、fallow が一度も動いていないのに「指摘を検出したが成功扱いにする」という事実と異なる警告とともに緑になる。そのため audit の前に `fallow --version` で取得可否を単独で確認し、失敗した場合は `fail_on_issues` と無関係に exit 2 で落とす（取得に成功していれば `npx` のキャッシュに載るため、続く audit でダウンロードは発生しない）。
+
 ### 課金について
 
 静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも必要としない（[LICENSE](https://github.com/fallow-rs/fallow/blob/main/LICENSE) / [docs.fallow.tools](https://docs.fallow.tools/)「Free static analysis of code and styles」）。有料なのは本番トレースを取り込む Fallow Runtime だけで、本ワークフローはこれを使わない。
