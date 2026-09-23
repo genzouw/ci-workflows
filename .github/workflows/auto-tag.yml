@@ -126,11 +126,15 @@ jobs:
           # 時の注意点は直前の commit_count 警告を参照)。
           messages="$(git log "${range[@]}" --format='%B')"
 
+          # here-string (<<<) でパイプを介さずに渡す。printf | grep -q だと、メッセージが
+          # パイプバッファを超えたとき grep -q が先に一致して読み込みを終え、printf 側が
+          # 閉じた pipe への書き込みで失敗し得る。set -o pipefail 下ではその失敗が
+          # bump 判定を静かに変えてしまう。
           bump="patch"
-          if printf '%s\n' "${messages}" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
-            || printf '%s\n' "${messages}" | grep -qE '^BREAKING[ -]CHANGE:'; then
+          if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "${messages}" \
+            || grep -qE '^BREAKING[ -]CHANGE:' <<< "${messages}"; then
             bump="major"
-          elif printf '%s\n' "${messages}" | grep -qE '^feat(\([^)]*\))?:'; then
+          elif grep -qE '^feat(\([^)]*\))?:' <<< "${messages}"; then
             bump="minor"
           fi
           echo "bump 種別: ${bump}"
