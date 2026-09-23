@@ -19,6 +19,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `typos.yml`             | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                  | なし（常時実行）                                                                                                         |
 | `semantic-pr.yml`       | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)`   | なし（`pull_request` のみ）                                                                                              |
 | `lychee.yml`            | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`           | `**/*.md`, `**/*.html`, `lychee.toml`                                                                                    |
+| `fallow.yml`            | TS/JS の変更ファイル品質ゲート（未使用コード・重複・複雑度）（PR 限定）           | `fallow (changed-file quality gate)`   | TS/JS の各拡張子, `**/package.json`, `.fallowrc.*`, `fallow.toml`                                                        |
 
 ## 提供 composite action
 
@@ -382,6 +383,180 @@ jobs:
       enforce: false # 誤検知観察中。観察後に削除して既定の true に戻す
 ```
 
+## `fallow.yml`（TS/JS の変更ファイル品質ゲート）
+
+[fallow](https://github.com/fallow-rs/fallow) でリポジトリを依存グラフとして読み、**その PR が変更したファイル**の未使用コード・重複・複雑度を判定する。TS/JS を持たないリポジトリから呼ばれた場合は「対象が無ければスキップ」する（`hadolint.yml` / `shellcheck.yml` と同じ方式）。
+
+### 既存の検査との役割分担（重複ではない）
+
+|                  | 各リポジトリの ESLint                | `fallow.yml`                                          |
+| ---------------- | ------------------------------------ | ----------------------------------------------------- |
+| 解析の単位       | 1 ファイル（ファイル内で閉じた規則） | リポジトリ全体の依存グラフ                            |
+| 検出できるもの   | 未使用変数、構文上の不備             | 未使用 export・到達不能ファイル・循環依存・コピペ重複 |
+| ファイルをまたぐ | 見ない                               | 見る                                                  |
+
+`typos.yml` は綴り、`markdownlint.yml` は Markdown 構造、`trivy.yml` / `gitleaks.yml` は脆弱性とシークレットを見るもので、いずれもコード品質は扱わない。
+
+### knip を持つリポジトリは当面の配布対象から外す
+
+上の比較は ci-workflows 配下の既存ワークフローと「各リポジトリの ESLint」を見たもので、配布先リポジトリの実体を確認すると **2 本が既に knip を持っている**。
+
+| リポジトリ      | knip                                                       |
+| --------------- | ---------------------------------------------------------- |
+| `toique`        | `.github/workflows/knip.yml` / `package.json` に `knip` 依存 |
+| `hyakuninissyu` | 同上 + `knip.jsonc`                                          |
+
+knip は未使用 export・到達不能ファイル・未使用依存を検出するツールで、fallow の dead-code 検出と守備範囲が正面から重なる。重なったまま両方を回すと困ることが 2 つある。
+
+1. **誤検知の除外設定が二重管理になる。** knip の除外は `knip.jsonc` の `entry` / `project` / `ignoreDependencies` に積み上がっているが、fallow はこのファイルを読まない。同じ「これは未使用ではない」という事実を 2 つの設定ファイルで維持することになる
+2. **両者の判定が既に食い違っている。** 上表のとおり hyakuninissyu はフルスキャンで dead-code 75 件だが、knip は緑のままである。この 75 件が本物の負債なのか `knip.jsonc` で意図的に除外されている対象なのかを切り分けないまま配布すると、開発者は 2 つのツールの言い分を毎 PR で突き合わせることになる
+
+**判断: `toique` / `hyakuninissyu` は当面の配布対象から外す。** 配布先は knip を持たない `monopo` / `kakezan-manabo` / `dice-api` とする。将来 fallow へ寄せる場合は `knip.jsonc` の除外を fallow の設定へ移す作業（`fallow migrate` が knip 設定の変換を持つ）と、上記 75 件の切り分けを済ませてから、knip の廃止と同時に行う。
+
+なお AGENTS.md 1.1 の「既に導入済みのツールと機能が重複する追加」は ci-workflows 自身を対象にした条項だが、reusable workflow は配布した瞬間に配布先へ実質同じ状況を生むため、ここでも同じ基準で判断している。
+
+### なぜ `command: audit`（変更ファイル限定）なのか
+
+導入時点の実測で、対象リポジトリはいずれも既存コードに指摘を持っている。
+
+| リポジトリ     | フルスキャンの結果                    |
+| -------------- | ------------------------------------- |
+| hyakuninissyu  | dead-code 75 件 / 重複 5 / 複雑度 9   |
+| toique         | dead-code 12 件 / 重複 16 / 複雑度 36 |
+| monopo         | dead-code 2 件 / 重複 13 / 複雑度 33  |
+| kakezan-manabo | dead-code 16 件 / 複雑度 6            |
+| dice-api       | dead-code 5 件                        |
+
+フルスキャンを赤検知にすると、その PR と無関係な負債で全 PR が落ちて検査として機能しない。`audit` は merge-base からの変更ファイルに判定を限定するため、既存の負債を無視して「これから増えるもの」だけを止められる。`trivy.yml`（今あるものの報告）と `dependency-review.yml`（これから増えるものの遮断）の関係と同じで、本ワークフローは後者にあたる。
+
+### トリガーの制約
+
+`audit` は base との merge-base を必要とするため、**スタブのトリガーは `pull_request` のみ**にすること。checkout は `fetch-depth: 0` で行っている（reusable workflow 側で設定済み）。
+
+これは散文の約束ではなく、**reusable workflow 側が強制する**。`github.event.pull_request.base.sha` が空になる呼ばれ方（`push` / `merge_group` など）では `::error::` + exit 2 で落ちる。CLI の merge-base 自動検出に委ねると、`main` 上での実行では merge-base が HEAD 自身になり、**変更ファイル 0 件のまま `audit` が pass してジョブが緑になる**（起動しているように見えて何も検査していない状態）ため。
+
+```yaml
+name: fallow
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.mts'
+      - '**/*.cts'
+      - '**/*.js'
+      - '**/*.jsx'
+      - '**/*.mjs'
+      - '**/*.cjs'
+      - '**/*.vue'
+      - '**/*.svelte'
+      - '**/package.json'
+      - '.fallowrc.json'
+      - '.fallowrc.jsonc'
+      - 'fallow.toml'
+      - '.fallow.toml'
+      - '.github/workflows/fallow.yml'
+
+concurrency:
+  group: fallow-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fallow:
+    uses: genzouw/ci-workflows/.github/workflows/fallow.yml@<full-commit-SHA> # vX.Y.Z
+```
+
+### 入力
+
+| 入力             | 既定   | 用途                                                                                          |
+| ---------------- | ------ | --------------------------------------------------------------------------------------------- |
+| `version`        | `""`   | fallow CLI のバージョン。空なら本ワークフロー側の既定値（`FALLOW_VERSION`、SSoT）を使う        |
+| `fail_on_issues` | `true` | `false` にすると指摘があっても job は成功する（段階導入用）                                    |
+
+`version` 入力そのものの既定値は空文字で、実際に使われるバージョンは `.github/workflows/fallow.yml` の `FALLOW_VERSION` が持つ。**バージョンのリテラルをこの表に書かない**のは、手動更新（Dependabot の対象外）で片方だけ直り README が古い値を指し続けるのを避けるため。現在の値は [`fallow.yml` の `FALLOW_VERSION`](.github/workflows/fallow.yml) を参照すること。
+
+### 公式 Action（`fallow-rs/fallow`）を使わない理由
+
+本リポジトリと配布先リポジトリはいずれも Actions の許可リストが **`selected`**（`github_owned` + `verified` + 個別許可パターン）に設定されている。許可されていないサードパーティ Action を参照したワークフローは、**実行される前に `startup_failure` で落ちる**。
+
+この失敗は check context を報告しないため、**PR のチェック一覧にも `gh pr checks` にも現れない**（緑に見えるが実際には何も実行されていない）。実際に公式 Action 版を push して確認した挙動である。
+
+```console
+$ gh run list --branch <branch> --json name,conclusion
+fallow      startup_failure   ← チェック一覧には出ない
+```
+
+Action を使うには対象全リポジトリの許可リスト変更が必要で、かつ許可リストは genzouw.com の Terraform 側にあるため、CI の定義とは別の場所で二重管理になる。CLI は npm から取得してローカルで完結するためこの制約を受けない。`gitleaks` / `hadolint` を公式バイナリの直接実行にしているのと同じ判断。
+
+副次的な利点として、PR コメント用トークンの発行先（`api.fallow.cloud`）を含む外部 SaaS への経路が構成から完全に消える。
+
+### 解析前に依存をインストールする
+
+`node_modules` が無いと fallow は各パッケージの `exports` / conditional exports を読めず、「import と依存が誤報告されうる」と自ら警告する。実測でも差が出た。
+
+| dice-api            | dead-code の検出                        |
+| ------------------- | --------------------------------------- |
+| `node_modules` あり | 5 件                                    |
+| `node_modules` なし | **6 件**（未解決 import が 1 件増える） |
+
+そのため解析の前に依存をインストールする。インストーラは **npm に一本化**している。Node.js と npm だけが runner にプリインストールされているためで、bun / pnpm を入れるには公式 Action か野良スクリプトが必要になり、前者は許可リスト（`selected`）に阻まれ、後者は供給網リスクを持ち込む。
+
+- `package-lock.json` があれば `npm ci`、無ければ `npm install`
+- **`npm ci` が失敗したら `npm install` にフォールバックする。** lockfile と `package.json` がずれていると `npm ci` は `EUSAGE` で必ず落ちる（dice-api が実際にこの状態で、`Missing: cac@6.7.14 from lock file`）。ここで諦めると、誤検知が出やすいリポジトリほど `node_modules` 無しで解析されることになるため、lockfile を無視してでも依存を入れる方へ倒している
+- `bun.lock` しか無いリポジトリ（toique / monopo / hyakuninissyu）では lockfile どおりの解決にはならないが、fallow が必要とするのは各パッケージの `exports` 情報であってバージョンの厳密一致ではない
+- `--ignore-scripts` を付けて `postinstall` を実行しない。依存を「読む」だけが目的で、ビルドも実行もしないため
+- **`npm install` にも失敗したら、解析を行わずに `::error::` + exit 2 で終了する。** `node_modules` 無しの解析は誤検知が増えることが上表のとおり実測で分かっており、そのまま走らせると「根拠の弱い赤」で無関係な PR を落とすことになる。exit 2 は「fallow 自体の失敗」と同じ扱いで、`fail_on_issues` と無関係に常に失敗する
+- `package.json` を持たないリポジトリでは依存のインストールを飛ばすが、同じ理由で `::warning::` を残す。黙って続けると「精度の落ちた解析が緑だった」状態を見分けられなくなるため
+
+### 指摘の出しかた（アノテーション + ジョブサマリー）
+
+解析は **1 回だけ**走らせて JSON を中間成果物（`${{ runner.temp }}/fallow-audit.json`）にし、そこから `fallow report --from` で 2 つの表示面を描画する。
+
+| 表示面               | 形式                 | 出る場所                       |
+| -------------------- | -------------------- | ------------------------------ |
+| インラインの指摘     | `github-annotations` | PR の Files changed の該当行   |
+| 一覧（件数と内訳表） | `github-summary`     | Actions のジョブサマリー       |
+
+`--format human` を標準出力に流すだけだと、赤くなった開発者は Actions のジョブログを開いて該当行まで遡らないと何を指摘されたのか分からない。`fail_on_issues: false`（段階導入用）ではジョブが緑のまま結果がログの奥に埋まるため、「報告のみ」が誰にも報告されない状態になる。
+
+どちらの形式もログベースの workflow command / job summary なので、**write 権限を持たない fork PR でも描画される**（`permissions: contents: read` のまま使える）。描画の失敗は `|| true` で握りつぶし、判定結果（audit の終了コード）には影響させない。
+
+### CLI バージョンの更新は手動
+
+CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が再現性を保つ唯一の手段になる。そのため本ワークフローの `version` 入力の既定値を単一の信頼できる情報源 (SSoT) とする。
+
+**`package.json` などのマニフェストではないため Dependabot の更新対象外**であり、更新は手動で行う（`gitleaks` のバージョンを composite action の `inputs.version` 既定値で一元管理しているのと同じ運用）。
+
+手動更新のときは次の 2 点を守る。
+
+- **公開から 7 日を越えたバージョンだけを選ぶ。** 本リポジトリは `.github/dependabot.yml` の `cooldown.default-days` と `.pinact.yaml` の `min_age.value` で「公開直後の上流を取り込まない」を 7 日と定めているが、`FALLOW_VERSION` は `env:` の文字列なので Dependabot の cooldown も pinact の `min_age` も届かない。機械が検査しない経路なので、人の目で守る
+- **README の「入力」表の記述も併せて直す。**
+
+また、外部バイナリを取る既存 6 経路（`actionlint.yml` / `hadolint.yml` / `lychee.yml` / `pinact.yml` / `trivy.yml` / `.github/actions/setup-gitleaks/action.yml`）は `.sha256` を併せて取得して `sha256sum -c` で照合しているが、**fallow だけはこの照合を持たない**。npm レジストリ経由の取得にはリリースごとの公開チェックサムが無いためで、代わりに npm レジストリの整合性と fallow 自身のバイナリ署名検証（`fallow --version` が `verified: yes ... signed` を出す）に委ねている。任意コード実行の面は `npx --yes --ignore-scripts` で `postinstall` を実行しないことで抑えている。
+
+### 終了コードの扱い
+
+| コード   | 意味                    | 本ワークフローの挙動                    |
+| -------- | ----------------------- | --------------------------------------- |
+| 0        | 指摘なし / verdict pass | 成功                                    |
+| 1        | 指摘あり / verdict fail | `fail_on_issues` に従う（既定は失敗）   |
+| 2 以上   | fallow 自体の失敗       | **`fail_on_issues` と無関係に常に失敗** |
+
+fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は runtime coverage サイドカー、7 はネットワーク障害、10〜13 はアップロード系）だが、本ワークフローは `case` の `*)` で 2 以上を一括して落とすため、個別に列挙しない（[fallow README「Output and exit codes」](https://github.com/fallow-rs/fallow#output-and-exit-codes)）。
+
+指摘の検出と fallow 自体の故障を区別している。区別しないと、CLI が壊れて何も解析していない状態が「指摘なし」と同じ緑になる。
+
+ただし `npx` は**パッケージの解決に失敗したときも exit 1 を返す**ため、終了コードだけでは「指摘あり」と区別できない。`fail_on_issues: false` の構成だと、fallow が一度も動いていないのに「指摘を検出したが成功扱いにする」という事実と異なる警告とともに緑になる。そのため audit の前に `fallow --version` で取得可否を単独で確認し、失敗した場合は `fail_on_issues` と無関係に exit 2 で落とす（取得に成功していれば `npx` のキャッシュに載るため、続く audit でダウンロードは発生しない）。
+
+### 課金について
+
+静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも必要としない（[LICENSE](https://github.com/fallow-rs/fallow/blob/main/LICENSE) / [docs.fallow.tools](https://docs.fallow.tools/)「Free static analysis of code and styles」）。有料なのは本番トレースを取り込む Fallow Runtime だけで、本ワークフローはこれを使わない。
+
 ## 運用契約（重要）
 
 1. **job の `name` を変更しない。** 呼び出し側では `<スタブjob名> / <本体job名>`（例: `gitleaks / Scan for leaked secrets`）が check context になり、genzouw.com の Terraform（`terraform/environments/github/main.tf` の `common_required_checks`）が必須チェック名として参照している。変更する場合は Terraform と同時に更新すること
@@ -389,6 +564,13 @@ jobs:
 3. **reusable workflow 側に workflow レベルの `concurrency` を定義しない。** 呼び出し元スタブと同一グループ名になると「Canceling since a deadlock was detected」で startup_failure する。concurrency はスタブ側でのみ定義する
 4. 破壊的変更（job 名変更・チェックの厳格化）はタグのメジャーバージョンを上げる
 5. **破壊的変更には Conventional Commits の `!` または `BREAKING CHANGE:` を必ず付ける。** タグは `auto-tag.yml` がコミットメッセージだけを見て自動採番するため、job 名を変えたのに `!` を付けないと、コミット種別に応じて minor（`feat:` 等）または patch（`fix:` / `ci:` 等）としてリリースされ、呼び出し側の必須チェックが黙って壊れる（後述）
+6. **`fallow.yml` は本リポジトリでは自己検査されない。** ci-workflows は TS/JS を持たないため `detect` ステップが必ず `found=false` を返し、`Install dependencies` と `Audit changed files` は一度も実行されない（本リポジトリの PR では 5 秒で success する）。`markdownlint.yml` / `typos.yml` が自リポジトリで実動作するのとは対照的に、`case` の分岐ミス・`ENFORCE` の比較崩れ・`installed` フラグの取り違えなど **actionlint が構文で拾えない種類の壊れ方は緑のまま通る**。この 100 行超の bash を変更したときは、TS/JS を持つ対象リポジトリの PR で実挙動を確認すること。導入時は draft PR で次の 6 パターンを確認した
+   - TS/JS 無し（`detect` でスキップ）
+   - `package-lock.json` あり（`npm ci` 成功）
+   - `npm ci` が `EUSAGE` で失敗 → `npm install` へフォールバック
+   - `bun.lock` のみ（`npm install` で近似）
+   - 変更ファイルに新規の指摘あり（`fail_on_issues: true` で失敗）
+   - 同上を `fail_on_issues: false`（`::warning::` を残して成功）
 
 ## リリース
 
