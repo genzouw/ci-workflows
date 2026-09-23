@@ -19,6 +19,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `typos.yml`             | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                  | なし（常時実行）                                                                                                         |
 | `semantic-pr.yml`       | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)`   | なし（`pull_request` のみ）                                                                                              |
 | `lychee.yml`            | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`           | `**/*.md`, `**/*.html`, `lychee.toml`                                                                                    |
+| `fallow.yml`            | TS/JS の変更ファイル品質ゲート（未使用コード・重複・複雑度）（PR 限定）           | `fallow (changed-file quality gate)`   | TS/JS の各拡張子, `**/package.json`, `.fallowrc.*`, `fallow.toml`                                                        |
 
 ## 提供 composite action
 
@@ -381,6 +382,87 @@ jobs:
     with:
       enforce: false # 誤検知観察中。観察後に削除して既定の true に戻す
 ```
+
+## `fallow.yml`（TS/JS の変更ファイル品質ゲート）
+
+[fallow](https://github.com/fallow-rs/fallow) でリポジトリを依存グラフとして読み、**その PR が変更したファイル**の未使用コード・重複・複雑度を判定する。TS/JS を持たないリポジトリから呼ばれた場合は「対象が無ければスキップ」する（`hadolint.yml` / `shellcheck.yml` と同じ方式）。
+
+### 既存の検査との役割分担（重複ではない）
+
+|                  | 各リポジトリの ESLint                | `fallow.yml`                                          |
+| ---------------- | ------------------------------------ | ----------------------------------------------------- |
+| 解析の単位       | 1 ファイル（ファイル内で閉じた規則） | リポジトリ全体の依存グラフ                            |
+| 検出できるもの   | 未使用変数、構文上の不備             | 未使用 export・到達不能ファイル・循環依存・コピペ重複 |
+| ファイルをまたぐ | 見ない                               | 見る                                                  |
+
+`typos.yml` は綴り、`markdownlint.yml` は Markdown 構造、`trivy.yml` / `gitleaks.yml` は脆弱性とシークレットを見るもので、いずれもコード品質は扱わない。
+
+### なぜ `command: audit`（変更ファイル限定）なのか
+
+導入時点の実測で、対象リポジトリはいずれも既存コードに指摘を持っている。
+
+| リポジトリ     | フルスキャンの結果                    |
+| -------------- | ------------------------------------- |
+| hyakuninissyu  | dead-code 75 件 / 重複 5 / 複雑度 9   |
+| toique         | dead-code 12 件 / 重複 16 / 複雑度 36 |
+| monopo         | dead-code 2 件 / 重複 13 / 複雑度 33  |
+| kakezan-manabo | dead-code 16 件 / 複雑度 6            |
+| dice-api       | dead-code 5 件                        |
+
+フルスキャンを赤検知にすると、その PR と無関係な負債で全 PR が落ちて検査として機能しない。`audit` は merge-base からの変更ファイルに判定を限定するため、既存の負債を無視して「これから増えるもの」だけを止められる。`trivy.yml`（今あるものの報告）と `dependency-review.yml`（これから増えるものの遮断）の関係と同じで、本ワークフローは後者にあたる。
+
+### トリガーの制約
+
+`audit` は base との merge-base を必要とするため、**スタブのトリガーは `pull_request` のみ**にすること。checkout は `fetch-depth: 0` で行っている（reusable workflow 側で設定済み）。
+
+```yaml
+name: fallow
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.js'
+      - '**/*.jsx'
+      - '**/*.mjs'
+      - '**/*.cjs'
+      - '**/*.vue'
+      - '**/package.json'
+      - '.fallowrc.json'
+      - '.github/workflows/fallow.yml'
+
+concurrency:
+  group: fallow-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fallow:
+    uses: genzouw/ci-workflows/.github/workflows/fallow.yml@<full-commit-SHA> # vX.Y.Z
+```
+
+### 入力
+
+| 入力             | 既定     | 用途                                                        |
+| ---------------- | -------- | ----------------------------------------------------------- |
+| `version`        | `3.28.0` | fallow CLI のバージョン。空なら本ワークフローの既定値を使う |
+| `fail_on_issues` | `true`   | `false` にすると指摘があっても job は成功する（段階導入用） |
+
+### CLI バージョンの更新は手動
+
+fallow は **Action の ref（`uses:` の SHA）と CLI のバージョンが独立**している。CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が再現性を保つ唯一の手段になる。そのため本ワークフローの `version` 入力の既定値を単一の信頼できる情報源 (SSoT) とする。
+
+**Dependabot が更新するのは `uses:` の SHA だけで、この既定値は更新されない。** `uses:` の更新 PR が来たら、同じ PR で `version` の既定値も揃えるか判断すること（`gitleaks` のバージョンを composite action の `inputs.version` 既定値で一元管理しているのと同じ運用）。
+
+### 課金について
+
+静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも必要としない（[LICENSE](https://github.com/fallow-rs/fallow/blob/main/LICENSE) / [docs.fallow.tools](https://docs.fallow.tools/)「Free static analysis of code and styles」）。有料なのは本番トレースを取り込む Fallow Runtime だけで、本ワークフローはこれを使わない。
+
+PR コメントを Fallow の GitHub App 名義で投稿するためのトークン発行（`api.fallow.cloud`）は `branded-token: false` で無効化している。`id-token: write` を与えていないので実際には発行されないが、外部サービスへの依存を構成として持たないことを明示するため明記している。
 
 ## 運用契約（重要）
 

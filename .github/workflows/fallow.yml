@@ -1,0 +1,116 @@
+name: fallow
+
+# TypeScript / JavaScript の「その PR が変更したファイル」だけを見て、未使用コード・
+# 重複・複雑度を判定する品質ゲート。
+#
+# 既存の lint との違い:
+#   - typos.yml / markdownlint.yml は綴りと Markdown の構造しか見ない
+#   - trivy.yml / gitleaks.yml は脆弱性とシークレットであり、コード品質は見ない
+#   - 各リポジトリの ESLint は「1 ファイル内で閉じた規則」しか見ないため、
+#     ファイルをまたぐ未使用 export・循環依存・コピペ重複は検出できない
+#   fallow は依存グラフを組み立てて到達不能なコードを判定するため、守備範囲が重ならない。
+#
+# なぜ `command: audit` なのか (フルスキャンにしない理由):
+#   導入時点の実測で、対象リポジトリはいずれも既存コードに指摘を持っている
+#   (hyakuninissyu: dead-code 75 件 / toique: dead-code 12 + 重複 16 / monopo: 複雑度 33)。
+#   フルスキャンを赤検知にすると、その PR と無関係な負債で全 PR が落ちて機能しない。
+#   audit は merge-base からの変更ファイルに判定を限定するため、既存の負債を無視して
+#   「これから増えるもの」だけを止められる。dependency-review.yml と同じ思想で、
+#   trivy.yml (報告のみ) と対になる位置づけ。
+#
+# 課金について (AGENTS.md 1 章):
+#   静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも
+#   必要としない。有料なのは本番トレースを取り込む Fallow Runtime だけで、本
+#   ワークフローはこれを使わない。外部 SaaS への通信を確実に避けるため
+#   `branded-token: false` を明示し、PR コメント用トークンの発行 (api.fallow.cloud)
+#   を無効化している。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  # audit は base との merge-base を必要とするため、pull_request 以外では動かさない。
+  workflow_call:
+    inputs:
+      version:
+        description: "使用する fallow CLI のバージョン。空なら本ワークフローの既定値を使う。"
+        type: string
+        required: false
+        default: ""
+      fail_on_issues:
+        description: "変更ファイルに指摘があったとき PR を落とすか。false なら報告のみ (段階導入用)。"
+        type: boolean
+        required: false
+        default: true
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+      - "**/*.cjs"
+      - "**/*.vue"
+      - "**/*.svelte"
+      - "**/package.json"
+      - ".fallowrc.json"
+      - ".fallowrc.jsonc"
+      - "fallow.toml"
+      - ".fallow.toml"
+      - ".github/workflows/fallow.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fallow:
+    name: fallow (changed-file quality gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # audit は merge-base からの差分を見るため、履歴全体が必要。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect TypeScript / JavaScript sources
+        id: detect
+        run: |
+          set -euo pipefail
+          # TS/JS を持たないリポジトリから呼ばれても落ちないようにする
+          # (hadolint.yml / shellcheck.yml と同じ「対象が無ければスキップ」方式)。
+          # 本リポジトリ自身のセルフテストもこの分岐でスキップされる。
+          mapfile -t sources < <(
+            git ls-files \
+              '*.ts' '*.tsx' '*.mts' '*.cts' \
+              '*.js' '*.jsx' '*.mjs' '*.cjs' \
+              '*.vue' '*.svelte' || true
+          )
+          if [ "${#sources[@]}" -eq 0 ]; then
+            echo "TypeScript / JavaScript のソースが見つかりませんでした。スキップします。"
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "解析対象候補: ${#sources[@]} ファイル"
+          echo 'found=true' >> "$GITHUB_OUTPUT"
+
+      - name: Audit changed files
+        if: steps.detect.outputs.found == 'true'
+        uses: fallow-rs/fallow@4f3bd9720ca6b22c8547adb7f1d225f57fc502d4 # v3.26.0
+        with:
+          # 変更ファイルに限定した品質ゲート。スコープは auto-changed-since (既定 true) が
+          # PR の base SHA から自動で決める。
+          command: audit
+          # Action の ref (uses: の SHA) と CLI のバージョンは fallow 側の仕様上独立している。
+          # CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が
+          # 再現性を保つ唯一の手段になる。ここが単一の信頼できる情報源 (SSoT)。
+          # Dependabot は uses: の SHA しか更新しないため、この値の更新は手動。
+          version: ${{ inputs.version || '3.28.0' }}
+          # workflow_call 以外 (セルフテスト) では inputs が空になるため、
+          # 明示的に false を渡されたときだけ報告のみに落とす。
+          fail-on-issues: ${{ inputs.fail_on_issues == false && 'false' || 'true' }}
+          format: human
+          # PR コメントを Fallow の GitHub App 名義で投稿するためのトークン発行
+          # (api.fallow.cloud) を無効化する。id-token: write を与えていないので
+          # 実際には発行されないが、外部依存を構成として持たないことを明示する。
+          branded-token: "false"
