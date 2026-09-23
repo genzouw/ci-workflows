@@ -172,19 +172,23 @@ jobs:
           FALLOW_VERSION: ${{ inputs.version || '3.26.0' }}
           # ${{ }} を run: に直接展開せず env 経由で渡す (template injection 対策)。
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # workflow_call 以外 (本リポジトリのセルフテスト) では空文字になる。
           # 明示的に false を渡されたときだけ報告のみに落とし、それ以外は落とす側へ倒す。
           ENFORCE: ${{ inputs.fail_on_issues }}
         run: |
           set -euo pipefail
 
-          # base が取れない呼ばれ方をしたときは、CLI 側の merge-base 自動検出に委ねる。
-          args=(audit --format human)
-          if [ -n "${BASE_SHA}" ]; then
-            args+=(--changed-since "${BASE_SHA}")
-          else
-            echo "::warning::base の SHA を取得できませんでした。CLI の merge-base 自動検出にフォールバックします。"
+          # audit は base との比較を前提にした設計なので、比較対象が取れない呼び出しは
+          # 設定ミスとして落とす。CLI の merge-base 自動検出に委ねると、main 上での実行で
+          # merge-base(origin/main, HEAD) が HEAD 自身になり、変更ファイル 0 件のまま
+          # audit が pass してジョブが緑になる (= 起動しているように見えて何も検査して
+          # いない状態)。これを防いでいるのが README の散文だけでは、スタブが人手で
+          # コピーされるうちに崩れる。
+          if [ -z "${BASE_SHA}" ]; then
+            echo "::error::base の SHA を取得できませんでした。fallow.yml は pull_request から呼び出してください (README「トリガーの制約」)。"
+            exit 2
           fi
+
+          args=(audit --changed-since "${BASE_SHA}")
 
           # 取得の可否を audit 本体とは別に確かめる。npx はパッケージ解決に失敗した
           # ときも exit 1 を返すため、そのまま audit を走らせると「fallow が指摘を

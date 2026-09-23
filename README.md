@@ -415,6 +415,8 @@ jobs:
 
 `audit` は base との merge-base を必要とするため、**スタブのトリガーは `pull_request` のみ**にすること。checkout は `fetch-depth: 0` で行っている（reusable workflow 側で設定済み）。
 
+これは散文の約束ではなく、**reusable workflow 側が強制する**。`github.event.pull_request.base.sha` が空になる呼ばれ方（`push` / `merge_group` など）では `::error::` + exit 2 で落ちる。CLI の merge-base 自動検出に委ねると、`main` 上での実行では merge-base が HEAD 自身になり、**変更ファイル 0 件のまま `audit` が pass してジョブが緑になる**（起動しているように見えて何も検査していない状態）ため。
+
 ```yaml
 name: fallow
 
