@@ -10,6 +10,12 @@
   "schedule": [
     "* * * * 1"
   ],
+  "description": [
+    "schedule は Dependabot の schedule: weekly/monday (実質 09:00 JST 限定) の完全な移植ではない。",
+    "Renovate の cron schedule は分フィールドに * を必須とする仕様で、0 9 * * 1 のような時刻固定は",
+    "config validator が `Invalid schedule: ... doesn't have * as minutes` で拒否する。",
+    "そのため時刻の限定はできず、月曜終日を許容範囲としている。"
+  ],
   "minimumReleaseAge": "7 days",
   "prConcurrentLimit": 5,
   "labels": [
