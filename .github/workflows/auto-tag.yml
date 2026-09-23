@@ -1,0 +1,136 @@
+name: auto-tag
+
+# main へのマージ時にリリースタグ (vX.Y.Z) を自動で作成する。
+#
+# 【重要】本ワークフローは reusable workflow ではない。本リポジトリ自身の
+# リリース運用専用であり、他リポジトリへスタブを配布するものではない。
+# (.github/workflows/ 配下の他のファイルはすべて workflow_call を持つ reusable)
+#
+# なぜ必要か:
+#   呼び出し側リポジトリのスタブは `uses: .../<workflow>.yml@<SHA> # vX.Y.Z` の形で
+#   full commit SHA を参照する。Dependabot がこの SHA を追従できるのは上流にタグが
+#   存在する場合だけで、タグを打ち忘れると全呼び出し元の参照が古いまま固定される。
+#   タグ付けは「忘れても誰も気づかないが、忘れると更新が止まる」種類の作業なので
+#   自動化する。
+#
+# なぜ外部 Action を使わないか:
+#   本リポジトリは Actions の許可リストが "selected" に設定されており、許可されて
+#   いないサードパーティ Action を参照したワークフローは startup_failure で落ちる
+#   (fallow.yml のコメント参照)。リリース系 Action も同様に使えないため、判定と
+#   タグ作成を自前で行う。
+#
+# なぜ git push ではなく gh api でタグを作るのか:
+#   git push でタグを打つには checkout に認証情報を残す (persist-credentials: true)
+#   必要があり、以後のステップすべてがその認証情報に触れられる状態になる。
+#   gh api なら GH_TOKEN を必要なステップにだけ渡せばよく、作業ツリーに認証情報が
+#   残らない。他のワークフローで徹底している persist-credentials: false を崩さない。
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  # タグ (refs/tags) の作成に必要。
+  contents: write
+
+jobs:
+  auto-tag:
+    name: auto-tag (release on merge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 直近タグとそこからのコミットを読むため、履歴とタグが必要。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # ${{ }} を run: に直接展開せず env 経由で渡す (template injection 対策)。
+          HEAD_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
+          if [ -z "${latest}" ]; then
+            echo "既存のタグがありません。全履歴を対象に判定します。"
+            base="v0.0.0"
+            range=()
+          else
+            echo "直近のタグ: ${latest}"
+            base="${latest}"
+            range=("${latest}..HEAD")
+          fi
+
+          # CI 定義に変更が無いなら、タグを打つ意味がない (呼び出し側が参照するのは
+          # ワークフローと composite action だけ)。README だけの更新でタグ番号を
+          # 消費しないようにする。
+          if [ "${#range[@]}" -gt 0 ]; then
+            mapfile -t changed < <(
+              git diff --name-only "${range[@]}" -- '.github/workflows' '.github/actions' || true
+            )
+            if [ "${#changed[@]}" -eq 0 ]; then
+              echo "${latest} 以降、CI 定義に変更がありません。タグ付けをスキップします。"
+              exit 0
+            fi
+            printf '変更された CI 定義: %s\n' "${changed[@]}"
+          fi
+
+          # Conventional Commits から bump 種別を決める。PR タイトルの規約準拠は
+          # semantic-pr.yml が別途強制しているため、squash merge のコミット件名は
+          # 必ず <type>[optional scope][!]: <description> の形になる。
+          messages="$(git log "${range[@]}" --format='%B')"
+
+          bump="patch"
+          if printf '%s\n' "${messages}" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
+            || printf '%s\n' "${messages}" | grep -qE '^BREAKING[ -]CHANGE:'; then
+            bump="major"
+          elif printf '%s\n' "${messages}" | grep -qE '^feat(\([^)]*\))?:'; then
+            bump="minor"
+          fi
+          echo "bump 種別: ${bump}"
+
+          version="${base#v}"
+          major="${version%%.*}"
+          rest="${version#*.}"
+          minor="${rest%%.*}"
+          patch="${rest#*.}"
+
+          case "${bump}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+
+          if git rev-parse -q --verify "refs/tags/${next}" >/dev/null; then
+            # 直近タグより大きい番号が既に存在する状況 (手動で先に打った等)。
+            # 黙って上書きせず、人が気づけるように警告して終わる。
+            echo "::warning::タグ ${next} は既に存在します。作成をスキップします。"
+            exit 0
+          fi
+
+          gh api "repos/${REPO}/git/refs" \
+            -f ref="refs/tags/${next}" \
+            -f sha="${HEAD_SHA}" > /dev/null
+
+          echo "タグ ${next} を ${HEAD_SHA} に作成しました。"
+          {
+            echo "### リリースタグ \`${next}\` を作成しました"
+            echo ""
+            echo "- 対象コミット: \`${HEAD_SHA}\`"
+            echo "- 直前のタグ: \`${base}\`"
+            echo "- bump 種別: \`${bump}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

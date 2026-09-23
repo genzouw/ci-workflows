@@ -388,7 +388,35 @@ jobs:
 2. `gitleaks` / `trivy` / `zizmor` には **paths フィルタを付けない**（必須チェックのため、context が報告されないPRが発生するとマージ不能になる）
 3. **reusable workflow 側に workflow レベルの `concurrency` を定義しない。** 呼び出し元スタブと同一グループ名になると「Canceling since a deadlock was detected」で startup_failure する。concurrency はスタブ側でのみ定義する
 4. 破壊的変更（job 名変更・チェックの厳格化）はタグのメジャーバージョンを上げる
+5. **破壊的変更には Conventional Commits の `!` または `BREAKING CHANGE:` を必ず付ける。** タグは `auto-tag.yml` がコミットメッセージだけを見て自動採番するため、job 名を変えたのに `!` を付けないとマイナーとしてリリースされ、呼び出し側の必須チェックが黙って壊れる（後述）
 
 ## リリース
 
-タグ `vX.Y.Z` を打つ。呼び出し側は Dependabot がタグに対応する SHA へ自動更新する。
+**main へマージすると `auto-tag.yml` がタグを自動で作成する。** 手動でタグを打つ必要はない。呼び出し側は Dependabot がタグに対応する SHA へ自動更新する。
+
+`auto-tag.yml` は本リポジトリ自身のリリース運用専用であり、**reusable workflow ではない**（他リポジトリへ配布しない）。`.github/workflows/` 配下で `workflow_call` を持たない唯一のファイルである。
+
+### 採番の規則
+
+直近の `vX.Y.Z` タグを起点に、そこから HEAD までのコミットメッセージで bump を決める。
+
+| コミット                                    | bump  |
+| ------------------------------------------- | ----- |
+| `<type>!:` または本文に `BREAKING CHANGE:`  | major |
+| `feat:`                                     | minor |
+| それ以外（`fix:` / `ci:` / `refactor:` 等） | patch |
+
+複数該当する場合は最も強いものを採用する。PR タイトルの Conventional Commits 準拠は `semantic-pr.yml` が別途強制しているため、squash merge のコミット件名は必ずこの形式になる。
+
+### タグを打たない条件
+
+- 直近タグ以降に **`.github/workflows/` と `.github/actions/` のいずれも変更されていない**場合はスキップする。呼び出し側が参照するのはこの 2 つだけなので、README だけの更新でタグ番号を消費しない
+- 算出した番号のタグが既に存在する場合もスキップする（黙って上書きせず `::warning::` を出す）
+
+### 自動化の限界
+
+**`auto-tag.yml` はコミットメッセージしか見ない。** job 名を変更したかどうかは判定していないため、運用契約 5 の `!` を付け忘れると破壊的変更がマイナーとしてリリースされる。この取りこぼしは自動化では塞いでおらず、レビューで担保する。
+
+### タグ作成に `git push` を使わない理由
+
+`git push` でタグを打つには checkout に認証情報を残す（`persist-credentials: true`）必要があり、以後のステップすべてがその認証情報に触れられる状態になる。`gh api repos/{owner}/{repo}/git/refs` なら `GH_TOKEN` を必要なステップにだけ渡せばよく、他のワークフローで徹底している `persist-credentials: false` を崩さない。
