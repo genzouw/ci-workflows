@@ -166,13 +166,13 @@ jobs:
           esac
           next="v${major}.${minor}.${patch}"
 
-          if git rev-parse -q --verify "refs/tags/${next}" >/dev/null; then
-            # 直近タグより大きい番号が既に存在する状況 (手動で先に打った等)。
-            # 黙って上書きせず、人が気づけるように警告して終わる。
-            echo "::warning::タグ ${next} は既に存在します。作成をスキップします。"
-            exit 0
-          fi
-
+          # next は latest を bump した番号であり、latest 自身は 67 行目の時点で
+          # 「条件を満たす最大の既存タグ」として選ばれている。そのため next と同じ
+          # タグがこの checkout のローカル ref に存在することはなく、
+          # `git rev-parse --verify refs/tags/${next}` は原理上常に失敗する
+          # (到達しないガード)。checkout 後に他プロセスがタグを push した場合のような
+          # 本当の衝突は、ローカル ref を見るこのガードでは検出できず、直後の
+          # gh api がそれを 422 で検出して job を失敗させる。
           gh api "repos/${REPO}/git/refs" \
             -f ref="refs/tags/${next}" \
             -f sha="${HEAD_SHA}" > /dev/null
