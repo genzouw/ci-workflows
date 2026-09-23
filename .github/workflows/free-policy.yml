@@ -56,8 +56,13 @@ jobs:
           # 組み込み」であるため、対象は .github 配下の YAML / JSON 設定と
           # composite action 定義に限定する。README や AGENTS.md がポリシー
           # 解説として鍵名を列挙しているのを誤検知しないための意図的な限定。
-          # .github/*.json は Renovate 設定 (renovate.json) のような、
-          # secrets 参照や課金APIキーを持ちうる JSON 形式の自動化設定を含む。
+          # .github/*.json / .github/*.json5 は Renovate 設定 (renovate.json)
+          # のような、secrets 参照や課金APIキーを持ちうる JSON 形式の自動化
+          # 設定を含む。Renovate は設定ファイルをリポジトリルート直下にも置ける
+          # (renovate.json / renovate.json5 / .renovaterc[.json|.json5]) ため、
+          # 呼び出し元リポジトリがそちらを採用していても検査が素通りしないよう、
+          # ルート直下の設置場所も明示的に列挙する。
+          # 参照: https://docs.renovatebot.com/configuration-options/
           #
           # 本ワークフロー自身も走査対象に含める。検出パターンの定義を含む
           # ファイルをパスで除外すると、呼び出し側リポジトリの同名スタブも
@@ -66,7 +71,9 @@ jobs:
           # `u[s]es` / `pull_request_targ[e]t` と同じ手法)。
           mapfile -t targets < <(
             git ls-files -- \
-              '.github/*.yml' '.github/*.yaml' '.github/*.json' \
+              '.github/*.yml' '.github/*.yaml' '.github/*.json' '.github/*.json5' \
+              'renovate.json' 'renovate.json5' \
+              '.renovaterc' '.renovaterc.json' '.renovaterc.json5' \
               'action.yml' 'action.yaml' '*/action.yml' '*/action.yaml' || true
           )
           if [ "${#targets[@]}" -eq 0 ]; then
