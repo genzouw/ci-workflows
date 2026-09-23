@@ -398,13 +398,14 @@ jobs:
 
 ### 採番の規則
 
-直近の `vX.Y.Z` タグを起点に、そこから HEAD までのコミットメッセージで bump を決める。
+直近の `vX.Y.Z` タグを起点に、そこから HEAD までのコミットメッセージで bump を決める。**判定対象はルールごとに件名（1行目）と本文で異なる**: `<type>!:` と `feat:` はコミット件名だけを見て判定し、`BREAKING CHANGE:` は Conventional Commits の仕様どおり本文のフッターだけを見る。件名まで本文と一緒に判定すると、squash merge のコミット本文（= PR 本文がそのまま入る）中の地の文に `feat:` や `BREAKING CHANGE:` と読める行があるだけで誤爆するため。
 
-| コミット                                    | bump  |
-| ------------------------------------------- | ----- |
-| `<type>!:` または本文に `BREAKING CHANGE:`  | major |
-| `feat:`                                     | minor |
-| それ以外（`fix:` / `ci:` / `refactor:` 等） | patch |
+| コミット                                    | 判定対象     | bump  |
+| ------------------------------------------- | ------------ | ----- |
+| `<type>!:`                                  | 件名         | major |
+| 本文に `BREAKING CHANGE:`                   | 本文フッター | major |
+| `feat:`                                     | 件名         | minor |
+| それ以外（`fix:` / `ci:` / `refactor:` 等） | -            | patch |
 
 複数該当する場合は最も強いものを採用する。PR タイトルの Conventional Commits 準拠は `semantic-pr.yml` が別途強制しているため、squash merge のコミット件名は必ずこの形式になる。
 
