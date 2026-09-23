@@ -29,6 +29,16 @@ on:
   push:
     branches: [main]
 
+# 近接する push で job が並行起動すると、両方が同じ「直近タグ」を起点に同じ
+# バージョンを算出し、後発側の `gh api` によるタグ作成が既存 ref との衝突で
+# 失敗する (その分のコミットはタグ未付与のまま放置される)。cancel-in-progress
+# は先行 job のタグ作成そのものを打ち消しかねないため false にし、直列化のみ行う。
+# auto-tag.yml は workflow_call を持たない非 reusable ワークフローなので、
+# 運用契約3 (reusable workflow 側に concurrency を定義しない) の対象外。
+concurrency:
+  group: auto-tag
+  cancel-in-progress: false
+
 permissions:
   # タグ (refs/tags) の作成に必要。
   contents: write
