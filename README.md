@@ -545,6 +545,13 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 2. `gitleaks` / `trivy` / `zizmor` には **paths フィルタを付けない**（必須チェックのため、context が報告されないPRが発生するとマージ不能になる）
 3. **reusable workflow 側に workflow レベルの `concurrency` を定義しない。** 呼び出し元スタブと同一グループ名になると「Canceling since a deadlock was detected」で startup_failure する。concurrency はスタブ側でのみ定義する
 4. 破壊的変更（job 名変更・チェックの厳格化）はタグのメジャーバージョンを上げる
+5. **`fallow.yml` は本リポジトリでは自己検査されない。** ci-workflows は TS/JS を持たないため `detect` ステップが必ず `found=false` を返し、`Install dependencies` と `Audit changed files` は一度も実行されない（本リポジトリの PR では 5 秒で success する）。`markdownlint.yml` / `typos.yml` が自リポジトリで実動作するのとは対照的に、`case` の分岐ミス・`ENFORCE` の比較崩れ・`installed` フラグの取り違えなど **actionlint が構文で拾えない種類の壊れ方は緑のまま通る**。この 100 行超の bash を変更したときは、TS/JS を持つ対象リポジトリの PR で実挙動を確認すること。導入時は draft PR で次の 6 パターンを確認した
+   - TS/JS 無し（`detect` でスキップ）
+   - `package-lock.json` あり（`npm ci` 成功）
+   - `npm ci` が `EUSAGE` で失敗 → `npm install` へフォールバック
+   - `bun.lock` のみ（`npm install` で近似）
+   - 変更ファイルに新規の指摘あり（`fail_on_issues: true` で失敗）
+   - 同上を `fail_on_issues: false`（`::warning::` を残して成功）
 
 ## リリース
 
