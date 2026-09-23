@@ -53,9 +53,11 @@ jobs:
 
           # --- 走査対象 -------------------------------------------------
           # 本ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの
-          # 組み込み」であるため、対象は .github 配下の YAML と composite
-          # action 定義に限定する。README や AGENTS.md がポリシー解説として
-          # 鍵名を列挙しているのを誤検知しないための意図的な限定。
+          # 組み込み」であるため、対象は .github 配下の YAML / JSON 設定と
+          # composite action 定義に限定する。README や AGENTS.md がポリシー
+          # 解説として鍵名を列挙しているのを誤検知しないための意図的な限定。
+          # .github/*.json は Renovate 設定 (renovate.json) のような、
+          # secrets 参照や課金APIキーを持ちうる JSON 形式の自動化設定を含む。
           #
           # 本ワークフロー自身も走査対象に含める。検出パターンの定義を含む
           # ファイルをパスで除外すると、呼び出し側リポジトリの同名スタブも
@@ -64,7 +66,7 @@ jobs:
           # `u[s]es` / `pull_request_targ[e]t` と同じ手法)。
           mapfile -t targets < <(
             git ls-files -- \
-              '.github/*.yml' '.github/*.yaml' \
+              '.github/*.yml' '.github/*.yaml' '.github/*.json' \
               'action.yml' 'action.yaml' '*/action.yml' '*/action.yaml' || true
           )
           if [ "${#targets[@]}" -eq 0 ]; then
