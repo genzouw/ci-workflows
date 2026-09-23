@@ -68,6 +68,17 @@ jobs:
           # `v2.0.0-rc.1` のようなプレリリースタグも拾ってしまう。厳密な vX.Y.Z 形式
           # だけを基点候補として残す。
           latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
+
+          # concurrency group は pending run のスケジュール順を push 順と一致させない。
+          # 後発 push の run が先に latest タグを作った状態で、先発 push の run が
+          # 後から動くと、latest は先発 run の HEAD の祖先ではなくなる。その状態で
+          # bump すると、古いコミットに新しい番号のタグが付き、リリース順序が
+          # 逆転する。祖先でなければ、この run は古い push のものとして何もせず終える。
+          if [ -n "${latest}" ] && ! git merge-base --is-ancestor "${latest}" HEAD; then
+            echo "::warning::タグ ${latest} はこの run の HEAD (${HEAD_SHA}) の祖先ではありません。並行 push で別の run が先行した可能性があるため、古い run として終了します。"
+            exit 0
+          fi
+
           if [ -z "${latest}" ]; then
             echo "既存のタグがありません。全履歴を対象に判定します。"
             base="v0.0.0"
