@@ -10,24 +10,32 @@ name: fallow
 #     ファイルをまたぐ未使用 export・循環依存・コピペ重複は検出できない
 #   fallow は依存グラフを組み立てて到達不能なコードを判定するため、守備範囲が重ならない。
 #
-# なぜ `command: audit` なのか (フルスキャンにしない理由):
+# なぜ `audit` なのか (フルスキャンにしない理由):
 #   導入時点の実測で、対象リポジトリはいずれも既存コードに指摘を持っている
 #   (hyakuninissyu: dead-code 75 件 / toique: dead-code 12 + 重複 16 / monopo: 複雑度 33)。
 #   フルスキャンを赤検知にすると、その PR と無関係な負債で全 PR が落ちて機能しない。
-#   audit は merge-base からの変更ファイルに判定を限定するため、既存の負債を無視して
-#   「これから増えるもの」だけを止められる。dependency-review.yml と同じ思想で、
-#   trivy.yml (報告のみ) と対になる位置づけ。
+#   audit は判定対象を「変更ファイル」かつ「その変更で新たに導入された指摘」(既定の
+#   --gate new-only) に限定するため、既存の負債を無視して「これから増えるもの」だけを
+#   止められる。dependency-review.yml と同じ思想で、trivy.yml (報告のみ) と対になる。
+#
+# なぜ公式 Action (fallow-rs/fallow) を使わず CLI を直接実行するのか:
+#   本リポジトリと配布先リポジトリはいずれも Actions の許可リストが "selected"
+#   (github_owned + verified + 個別許可パターン) に設定されている。許可されていない
+#   サードパーティ Action を参照したワークフローは、実行される前に startup_failure で
+#   落ちる (check context を報告しないため PR のチェック一覧にも現れない)。
+#   Action を使うには全リポジトリの許可リスト変更が必要になるうえ、許可リストの管理は
+#   genzouw.com の Terraform 側にあり、CI の定義とは別の場所で二重管理になる。
+#   CLI は npm から取得してローカルで完結するため、この制約を受けない。
+#   gitleaks / hadolint を公式バイナリの直接実行にしているのと同じ判断。
 #
 # 課金について (AGENTS.md 1 章):
 #   静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも
 #   必要としない。有料なのは本番トレースを取り込む Fallow Runtime だけで、本
-#   ワークフローはこれを使わない。外部 SaaS への通信を確実に避けるため
-#   `branded-token: false` を明示し、PR コメント用トークンの発行 (api.fallow.cloud)
-#   を無効化している。
+#   ワークフローはこれを使わない。CLI の直接実行には外部 SaaS への通信も伴わない。
 
 on:
   # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
-  # audit は base との merge-base を必要とするため、pull_request 以外では動かさない。
+  # audit は base との比較を前提とするため、pull_request 以外では動かさない。
   workflow_call:
     inputs:
       version:
@@ -36,7 +44,7 @@ on:
         required: false
         default: ""
       fail_on_issues:
-        description: "変更ファイルに指摘があったとき PR を落とすか。false なら報告のみ (段階導入用)。"
+        description: "変更ファイルに新たな指摘があったとき PR を落とすか。false なら報告のみ (段階導入用)。"
         type: boolean
         required: false
         default: true
@@ -65,18 +73,29 @@ jobs:
   fallow:
     name: fallow (changed-file quality gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # audit は merge-base からの差分を見るため、履歴全体が必要。
+          # audit は base との差分を見るため、履歴全体が必要。
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Detect TypeScript / JavaScript sources
-        id: detect
+      - name: Audit changed files
+        env:
+          # CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が
+          # 再現性を保つ唯一の手段になる。この既定値が単一の信頼できる情報源 (SSoT)。
+          # npm ecosystem のマニフェストではないため Dependabot の更新対象外で、
+          # 更新は手動で行う。
+          FALLOW_VERSION: ${{ inputs.version || '3.28.0' }}
+          # ${{ }} を run: に直接展開せず env 経由で渡す (template injection 対策)。
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # workflow_call 以外 (本リポジトリのセルフテスト) では空文字になる。
+          # 明示的に false を渡されたときだけ報告のみに落とし、それ以外は落とす側へ倒す。
+          ENFORCE: ${{ inputs.fail_on_issues }}
         run: |
           set -euo pipefail
+
           # TS/JS を持たないリポジトリから呼ばれても落ちないようにする
           # (hadolint.yml / shellcheck.yml と同じ「対象が無ければスキップ」方式)。
           # 本リポジトリ自身のセルフテストもこの分岐でスキップされる。
@@ -88,29 +107,38 @@ jobs:
           )
           if [ "${#sources[@]}" -eq 0 ]; then
             echo "TypeScript / JavaScript のソースが見つかりませんでした。スキップします。"
-            echo 'found=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "解析対象候補: ${#sources[@]} ファイル"
-          echo 'found=true' >> "$GITHUB_OUTPUT"
 
-      - name: Audit changed files
-        if: steps.detect.outputs.found == 'true'
-        uses: fallow-rs/fallow@4f3bd9720ca6b22c8547adb7f1d225f57fc502d4 # v3.26.0
-        with:
-          # 変更ファイルに限定した品質ゲート。スコープは auto-changed-since (既定 true) が
-          # PR の base SHA から自動で決める。
-          command: audit
-          # Action の ref (uses: の SHA) と CLI のバージョンは fallow 側の仕様上独立している。
-          # CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が
-          # 再現性を保つ唯一の手段になる。ここが単一の信頼できる情報源 (SSoT)。
-          # Dependabot は uses: の SHA しか更新しないため、この値の更新は手動。
-          version: ${{ inputs.version || '3.28.0' }}
-          # workflow_call 以外 (セルフテスト) では inputs が空になるため、
-          # 明示的に false を渡されたときだけ報告のみに落とす。
-          fail-on-issues: ${{ inputs.fail_on_issues == false && 'false' || 'true' }}
-          format: human
-          # PR コメントを Fallow の GitHub App 名義で投稿するためのトークン発行
-          # (api.fallow.cloud) を無効化する。id-token: write を与えていないので
-          # 実際には発行されないが、外部依存を構成として持たないことを明示する。
-          branded-token: "false"
+          # base が取れない呼ばれ方をしたときは、CLI 側の merge-base 自動検出に委ねる。
+          args=(audit --format human)
+          if [ -n "${BASE_SHA}" ]; then
+            args+=(--changed-since "${BASE_SHA}")
+          else
+            echo "::warning::base の SHA を取得できませんでした。CLI の merge-base 自動検出にフォールバックします。"
+          fi
+
+          status=0
+          npx --yes "fallow@${FALLOW_VERSION}" "${args[@]}" || status=$?
+
+          # 終了コードの意味: 0=pass / 1=findings または fail verdict /
+          # 2=設定・実行時エラー / 3=リソース不足 / 8=security gate
+          # (https://github.com/fallow-rs/fallow#exit-codes)
+          case "${status}" in
+            0)
+              exit 0
+              ;;
+            1)
+              if [ "${ENFORCE}" = "false" ]; then
+                echo "::warning::fallow audit が指摘を検出しましたが、fail_on_issues: false のため job は成功扱いにします。"
+                exit 0
+              fi
+              exit 1
+              ;;
+            *)
+              # 指摘の検出ではなく fallow 自体の失敗。fail_on_issues とは無関係に落とす。
+              echo "::error::fallow が予期しない終了コード ${status} で終了しました。"
+              exit "${status}"
+              ;;
+          esac

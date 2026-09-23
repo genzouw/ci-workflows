@@ -452,17 +452,40 @@ jobs:
 | `version`        | `3.28.0` | fallow CLI のバージョン。空なら本ワークフローの既定値を使う |
 | `fail_on_issues` | `true`   | `false` にすると指摘があっても job は成功する（段階導入用） |
 
+### 公式 Action（`fallow-rs/fallow`）を使わない理由
+
+本リポジトリと配布先リポジトリはいずれも Actions の許可リストが **`selected`**（`github_owned` + `verified` + 個別許可パターン）に設定されている。許可されていないサードパーティ Action を参照したワークフローは、**実行される前に `startup_failure` で落ちる**。
+
+この失敗は check context を報告しないため、**PR のチェック一覧にも `gh pr checks` にも現れない**（緑に見えるが実際には何も実行されていない）。実際に公式 Action 版を push して確認した挙動である。
+
+```console
+$ gh run list --branch <branch> --json name,conclusion
+fallow      startup_failure   ← チェック一覧には出ない
+```
+
+Action を使うには対象全リポジトリの許可リスト変更が必要で、かつ許可リストは genzouw.com の Terraform 側にあるため、CI の定義とは別の場所で二重管理になる。CLI は npm から取得してローカルで完結するためこの制約を受けない。`gitleaks` / `hadolint` を公式バイナリの直接実行にしているのと同じ判断。
+
+副次的な利点として、PR コメント用トークンの発行先（`api.fallow.cloud`）を含む外部 SaaS への経路が構成から完全に消える。
+
 ### CLI バージョンの更新は手動
 
-fallow は **Action の ref（`uses:` の SHA）と CLI のバージョンが独立**している。CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が再現性を保つ唯一の手段になる。そのため本ワークフローの `version` 入力の既定値を単一の信頼できる情報源 (SSoT) とする。
+CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が再現性を保つ唯一の手段になる。そのため本ワークフローの `version` 入力の既定値を単一の信頼できる情報源 (SSoT) とする。
 
-**Dependabot が更新するのは `uses:` の SHA だけで、この既定値は更新されない。** `uses:` の更新 PR が来たら、同じ PR で `version` の既定値も揃えるか判断すること（`gitleaks` のバージョンを composite action の `inputs.version` 既定値で一元管理しているのと同じ運用）。
+**`package.json` などのマニフェストではないため Dependabot の更新対象外**であり、更新は手動で行う（`gitleaks` のバージョンを composite action の `inputs.version` 既定値で一元管理しているのと同じ運用）。
+
+### 終了コードの扱い
+
+| コード  | 意味                              | 本ワークフローの挙動                    |
+| ------- | --------------------------------- | --------------------------------------- |
+| 0       | 指摘なし / verdict pass           | 成功                                    |
+| 1       | 指摘あり / verdict fail           | `fail_on_issues` に従う（既定は失敗）   |
+| 2, 3, 8 | fallow 自体の失敗（設定・実行時） | **`fail_on_issues` と無関係に常に失敗** |
+
+指摘の検出と fallow 自体の故障を区別している。区別しないと、CLI が壊れて何も解析していない状態が「指摘なし」と同じ緑になる。
 
 ### 課金について
 
 静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも必要としない（[LICENSE](https://github.com/fallow-rs/fallow/blob/main/LICENSE) / [docs.fallow.tools](https://docs.fallow.tools/)「Free static analysis of code and styles」）。有料なのは本番トレースを取り込む Fallow Runtime だけで、本ワークフローはこれを使わない。
-
-PR コメントを Fallow の GitHub App 名義で投稿するためのトークン発行（`api.fallow.cloud`）は `branded-token: false` で無効化している。`id-token: write` を与えていないので実際には発行されないが、外部サービスへの依存を構成として持たないことを明示するため明記している。
 
 ## 運用契約（重要）
 
