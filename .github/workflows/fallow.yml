@@ -174,6 +174,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           # 明示的に false を渡されたときだけ報告のみに落とし、それ以外は落とす側へ倒す。
           ENFORCE: ${{ inputs.fail_on_issues }}
+          # audit の JSON を中間成果物として置く先。ここから github-annotations と
+          # github-summary を描画するため、解析自体は 1 回で済む。
+          RESULTS_JSON: ${{ runner.temp }}/fallow-audit.json
         run: |
           set -euo pipefail
 
@@ -188,7 +191,12 @@ jobs:
             exit 2
           fi
 
-          args=(audit --changed-since "${BASE_SHA}")
+          # 解析は 1 回だけ走らせて JSON を中間成果物にし、そこから GitHub の 2 つの
+          # 表示面を描画する。--format human は標準出力に流すだけなので、赤くなった
+          # 開発者はジョブログを遡らないと指摘内容に辿り着けない。fail_on_issues: false
+          # (段階導入用) ではジョブが緑のまま結果がログの奥に埋まり、「報告のみ」が
+          # 誰にも報告されない状態になる。
+          args=(audit --changed-since "${BASE_SHA}" --format json --output-file "${RESULTS_JSON}")
 
           # 取得の可否を audit 本体とは別に確かめる。npx はパッケージ解決に失敗した
           # ときも exit 1 を返すため、そのまま audit を走らせると「fallow が指摘を
@@ -210,6 +218,17 @@ jobs:
 
           status=0
           npx --yes --ignore-scripts "fallow@${FALLOW_VERSION}" "${args[@]}" || status=$?
+
+          # 表示面の描画は判定結果に影響させない (|| true)。github-annotations は
+          # 変更行に直接アノテーションを出し、github-summary はジョブサマリーに表を出す。
+          # どちらもログベースなので、write 権限を持たない fork PR でも描画され、
+          # permissions: contents: read のまま使える。
+          if [ -f "${RESULTS_JSON}" ]; then
+            npx --yes --ignore-scripts "fallow@${FALLOW_VERSION}" \
+              report --from "${RESULTS_JSON}" --format github-annotations || true
+            npx --yes --ignore-scripts "fallow@${FALLOW_VERSION}" \
+              report --from "${RESULTS_JSON}" --format github-summary >> "${GITHUB_STEP_SUMMARY}" || true
+          fi
 
           # 終了コードの意味: 0=pass / 1=findings または fail verdict /
           # 2=設定・実行時エラー / 3=リソース不足 / 8=security gate
