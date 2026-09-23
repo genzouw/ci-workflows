@@ -12,8 +12,8 @@ name: pinact
 #      上流が侵害された直後のリリースを取り込めば意味がない。取り込みを一定期間
 #      遅らせることで、上流側で問題が発覚する時間を確保する。
 #
-# 閾値は呼び出し元の .github/dependabot.yml の `cooldown.default-days` と
-# 揃えること。揃っていないと Dependabot の更新 PR が本チェックで落ちる。
+# 閾値は呼び出し元の .github/renovate.json の `minimumReleaseAge` と
+# 揃えること。揃っていないと Renovate の更新 PR が本チェックで落ちる。
 
 on:
   # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。

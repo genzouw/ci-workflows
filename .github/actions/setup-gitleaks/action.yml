@@ -3,14 +3,14 @@ description: 'gitleaks の公式リリースバイナリをチェックサム検
 
 # gitleaks のバージョンは、このリポジトリの reusable workflow (.github/workflows/gitleaks.yml) と
 # 各リポジトリ側の個別ワークフロー (例: genzouw/toique の .github/workflows/pr-secret-review.yml) の
-# 両方で必要になる。それぞれの `run:` ブロックに GITLEAKS_VERSION を書くと Dependabot の
-# 更新対象外 (run ブロック内の文字列) となり、片方だけ古いまま放置されても誰も気づけない。
+# 両方で必要になる。それぞれの `run:` ブロックに GITLEAKS_VERSION を書くと Renovate の
+# 既定の更新対象外 (run ブロック内の文字列) となり、片方だけ古いまま放置されても誰も気づけない。
 # gitleaks はマイナー版でルール追加やパーサ修正が入るため、版がずれると「片方は検知し、
 # 片方は見逃す」状態が静かに続く (genzouw/toique#718)。
 #
 # そこでインストール手順とバージョンの既定値をこの composite action に集約し、
 # 利用側は `uses: genzouw/ci-workflows/.github/actions/setup-gitleaks@<sha>` で参照する。
-# SHA 参照は Dependabot (github-actions ecosystem) の更新対象に載るため、
+# SHA 参照は Renovate (github-actions manager) の更新対象に載るため、
 # バージョン同期が「手で揃える運用」ではなく構造で保証される。
 inputs:
   version:
