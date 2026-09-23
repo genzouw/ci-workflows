@@ -479,6 +479,7 @@ Action を使うには対象全リポジトリの許可リスト変更が必要�
 そのため解析の前に依存をインストールする。インストーラは **npm に一本化**している。Node.js と npm だけが runner にプリインストールされているためで、bun / pnpm を入れるには公式 Action か野良スクリプトが必要になり、前者は許可リスト（`selected`）に阻まれ、後者は供給網リスクを持ち込む。
 
 - `package-lock.json` があれば `npm ci`、無ければ `npm install`
+- **`npm ci` が失敗したら `npm install` にフォールバックする。** lockfile と `package.json` がずれていると `npm ci` は `EUSAGE` で必ず落ちる（dice-api が実際にこの状態で、`Missing: cac@6.7.14 from lock file`）。ここで諦めると、誤検知が出やすいリポジトリほど `node_modules` 無しで解析されることになるため、lockfile を無視してでも依存を入れる方へ倒している
 - `bun.lock` しか無いリポジトリ（toique / monopo / hyakuninissyu）では lockfile どおりの解決にはならないが、fallow が必要とするのは各パッケージの `exports` 情報であってバージョンの厳密一致ではない
 - `--ignore-scripts` を付けて `postinstall` を実行しない。依存を「読む」だけが目的で、ビルドも実行もしないため
 - インストールに失敗しても解析は続行するが、`::warning::` を残す。黙って続けると「精度の落ちた解析が緑だった」状態を見分けられなくなるため

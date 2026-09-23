@@ -126,18 +126,29 @@ jobs:
             exit 0
           fi
 
+          installed=0
           if [ -f package-lock.json ]; then
             echo "package-lock.json を検出しました。npm ci を実行します。"
-            install_cmd=(npm ci --ignore-scripts --no-audit --no-fund)
-          else
-            echo "npm の lockfile がありません。npm install で近似します。"
-            install_cmd=(npm install --ignore-scripts --no-audit --no-fund)
+            if npm ci --ignore-scripts --no-audit --no-fund; then
+              installed=1
+            else
+              # lockfile と package.json がずれていると npm ci は EUSAGE で必ず落ちる
+              # (dice-api が実際にこの状態)。ここで諦めると、誤検知が出やすい
+              # リポジトリほど node_modules 無しで解析されることになるため、
+              # lockfile を無視してでも依存を入れる方へ倒す。
+              echo "::warning::npm ci に失敗しました。package.json と package-lock.json が同期していない可能性があります。npm install にフォールバックします。"
+            fi
           fi
 
-          if ! "${install_cmd[@]}"; then
-            # 依存が無くても fallow は動くが、解析精度は落ちる。黙って続けると
-            # 「精度の落ちた解析が緑だった」という状態を見分けられなくなるため警告を残す。
-            echo "::warning::依存のインストールに失敗しました。node_modules 無しで解析を続行しますが、import と依存が誤報告される可能性があります。"
+          if [ "${installed}" -eq 0 ]; then
+            if [ ! -f package-lock.json ]; then
+              echo "npm の lockfile がありません。npm install で近似します。"
+            fi
+            if ! npm install --ignore-scripts --no-audit --no-fund; then
+              # 依存が無くても fallow は動くが、解析精度は落ちる。黙って続けると
+              # 「精度の落ちた解析が緑だった」という状態を見分けられなくなるため警告を残す。
+              echo "::warning::依存のインストールに失敗しました。node_modules 無しで解析を続行しますが、import と依存が誤報告される可能性があります。"
+            fi
           fi
 
       - name: Audit changed files
