@@ -98,8 +98,10 @@ jobs:
           # CI 定義に変更が無いなら、タグを打つ意味がない (呼び出し側が参照するのは
           # ワークフローと composite action だけ)。README だけの更新でタグ番号を
           # 消費しないようにする。既存タグが無い初回リリースでも、空のツリーを
-          # 起点に同じ判定を行う。
-          changed="$(git diff --name-only "${diff_base}" HEAD -- '.github/workflows' '.github/actions')"
+          # 起点に同じ判定を行う。auto-tag.yml 自身は他リポジトリへ配布しない
+          # (workflow_call を持たない) ため、これだけの変更でもタグ番号を消費
+          # しないよう除外する。
+          changed="$(git diff --name-only "${diff_base}" HEAD -- '.github/workflows' '.github/actions' ':(exclude).github/workflows/auto-tag.yml')"
           if [ -z "${changed}" ]; then
             echo "${latest:-<初回>} 以降、CI 定義に変更がありません。タグ付けをスキップします。"
             exit 0
