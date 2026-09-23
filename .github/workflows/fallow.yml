@@ -124,7 +124,7 @@ jobs:
           # --ignore-scripts で postinstall を実行しない。依存を「読む」だけが目的で、
           # ビルドも実行もしないため、任意コード実行の面を広げる必要がない。
           if [ ! -f package.json ]; then
-            echo "package.json がありません。依存のインストールをスキップします。"
+            echo "::warning::package.json がありません。node_modules 無しで解析を続行しますが、import と依存が誤報告される可能性があります。"
             exit 0
           fi
 
@@ -147,9 +147,13 @@ jobs:
               echo "npm の lockfile がありません。npm install で近似します。"
             fi
             if ! npm install --ignore-scripts --no-audit --no-fund; then
-              # 依存が無くても fallow は動くが、解析精度は落ちる。黙って続けると
-              # 「精度の落ちた解析が緑だった」という状態を見分けられなくなるため警告を残す。
-              echo "::warning::依存のインストールに失敗しました。node_modules 無しで解析を続行しますが、import と依存が誤報告される可能性があります。"
+              # node_modules 無しの解析は誤検知が増えることが実測で分かっている
+              # (dice-api で dead-code 5 件 -> 6 件)。そのまま audit を走らせると
+              # 「根拠の弱い赤」で無関係な PR を落とすことになるため、判定そのものを
+              # 行わずに終了する。exit 2 は audit の *) と同じ「fallow 自体の失敗」の
+              # 扱いで、fail_on_issues とは無関係に常に失敗する。
+              echo "::error::依存のインストールに失敗しました。node_modules 無しの解析は import と依存を誤報告するため、判定を行わずに終了します。"
+              exit 2
             fi
           fi
 

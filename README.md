@@ -488,7 +488,8 @@ Action を使うには対象全リポジトリの許可リスト変更が必要�
 - **`npm ci` が失敗したら `npm install` にフォールバックする。** lockfile と `package.json` がずれていると `npm ci` は `EUSAGE` で必ず落ちる（dice-api が実際にこの状態で、`Missing: cac@6.7.14 from lock file`）。ここで諦めると、誤検知が出やすいリポジトリほど `node_modules` 無しで解析されることになるため、lockfile を無視してでも依存を入れる方へ倒している
 - `bun.lock` しか無いリポジトリ（toique / monopo / hyakuninissyu）では lockfile どおりの解決にはならないが、fallow が必要とするのは各パッケージの `exports` 情報であってバージョンの厳密一致ではない
 - `--ignore-scripts` を付けて `postinstall` を実行しない。依存を「読む」だけが目的で、ビルドも実行もしないため
-- インストールに失敗しても解析は続行するが、`::warning::` を残す。黙って続けると「精度の落ちた解析が緑だった」状態を見分けられなくなるため
+- **`npm install` にも失敗したら、解析を行わずに `::error::` + exit 2 で終了する。** `node_modules` 無しの解析は誤検知が増えることが上表のとおり実測で分かっており、そのまま走らせると「根拠の弱い赤」で無関係な PR を落とすことになる。exit 2 は「fallow 自体の失敗」と同じ扱いで、`fail_on_issues` と無関係に常に失敗する
+- `package.json` を持たないリポジトリでは依存のインストールを飛ばすが、同じ理由で `::warning::` を残す。黙って続けると「精度の落ちた解析が緑だった」状態を見分けられなくなるため
 
 ### CLI バージョンの更新は手動
 
