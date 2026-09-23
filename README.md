@@ -496,6 +496,13 @@ CLI は npm 経由で取得されるため SHA ピン留めができず、バー
 
 **`package.json` などのマニフェストではないため Dependabot の更新対象外**であり、更新は手動で行う（`gitleaks` のバージョンを composite action の `inputs.version` 既定値で一元管理しているのと同じ運用）。
 
+手動更新のときは次の 2 点を守る。
+
+- **公開から 7 日を越えたバージョンだけを選ぶ。** 本リポジトリは `.github/dependabot.yml` の `cooldown.default-days` と `.pinact.yaml` の `min_age.value` で「公開直後の上流を取り込まない」を 7 日と定めているが、`FALLOW_VERSION` は `env:` の文字列なので Dependabot の cooldown も pinact の `min_age` も届かない。機械が検査しない経路なので、人の目で守る
+- **README の「入力」表の記述も併せて直す。**
+
+また、外部バイナリを取る既存 6 経路（`actionlint.yml` / `hadolint.yml` / `lychee.yml` / `pinact.yml` / `trivy.yml` / `.github/actions/setup-gitleaks/action.yml`）は `.sha256` を併せて取得して `sha256sum -c` で照合しているが、**fallow だけはこの照合を持たない**。npm レジストリ経由の取得にはリリースごとの公開チェックサムが無いためで、代わりに npm レジストリの整合性と fallow 自身のバイナリ署名検証（`fallow --version` が `verified: yes ... signed` を出す）に委ねている。任意コード実行の面は `npx --yes --ignore-scripts` で `postinstall` を実行しないことで抑えている。
+
 ### 終了コードの扱い
 
 | コード  | 意味                              | 本ワークフローの挙動                    |
