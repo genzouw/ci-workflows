@@ -45,8 +45,10 @@ jobs:
           # 探索対象は renovate 本体 (lib/config/app-strings.ts の configFileNames) に揃える。
           # ここが狭いと、該当しないファイルの設定が壊れていても検証されず緑になる。
           # package.json 内の "renovate" キーは本体も探索するが、package.json の存在だけでは
-          # 設定の有無を判定できないため対象外とする。
+          # 設定の有無を判定できないため対象外とする。validate ステップには検出したファイルを
+          # 明示的に渡し、package.json 内の "renovate" キーが検証されないようにしている。
           found=false
+          files=()
           for f in \
             renovate.json renovate.jsonc renovate.json5 \
             .github/renovate.json .github/renovate.jsonc .github/renovate.json5 \
@@ -55,6 +57,7 @@ jobs:
             if [ -f "$f" ]; then
               echo "検出: $f"
               found=true
+              files+=("$f")
             fi
           done
 
@@ -62,6 +65,8 @@ jobs:
             echo "Renovate 設定ファイルが無いため検証をスキップします。"
           fi
           echo "found=$found" >> "$GITHUB_OUTPUT"
+          # 検出したファイルは validate ステップへ空白区切りで渡す (パスに空白は含まれない)。
+          echo "files=${files[*]:-}" >> "$GITHUB_OUTPUT"
 
       # renovate 44 系は engines が node ^24.11.0。runner の既定 Node に依存すると
       # イメージ更新で突然動かなくなるため、明示的に入れる。
@@ -82,14 +87,17 @@ jobs:
           # (.github/renovate.json の minimumReleaseAge と .pinact.yaml の min_age と
           # 揃える。ここは機械的な検査が届かないので人の目だけが頼り)。
           RENOVATE_VERSION: ${{ inputs.version || '44.97.4' }}
+          RENOVATE_CONFIG_FILES: ${{ steps.detect.outputs.files }}
         # reusable workflow は呼び出し元リポジトリで動くため、この repo の lockfile を参照できない。
         # バージョンは RENOVATE_VERSION で完全一致に固定しており、ad-hoc インストールは意図的。
         run: | # zizmor: ignore[adhoc-packages]
           set -euo pipefail
 
-          # 引数にファイルを渡すと global config (自己ホスト用の設定) として検証され、
-          # repo config には無効なオプション名で誤検知する。引数なしなら
-          # カレントディレクトリの repo config を自動検出して repo config として検証する。
+          # 検出ステップで見つけたファイルだけを引数に渡す。引数なしだと package.json 内の
+          # "renovate" キーも検証対象になり、検出対象外のはずの設定で失敗するため。
+          # ファイルを渡すと既定では global config (自己ホスト用の設定) として検証され、
+          # repo config には無効なオプション名で誤検知するので、--no-global で repo config
+          # として検証させる。
           #
           # --strict: 警告 (非推奨オプションなど) も失敗として扱う。
           #
@@ -111,4 +119,6 @@ jobs:
             exit 1
           }
 
-          "$dir/node_modules/.bin/renovate-config-validator" --strict
+          read -ra config_files <<< "$RENOVATE_CONFIG_FILES"
+          "$dir/node_modules/.bin/renovate-config-validator" --strict --no-global \
+            "${config_files[@]}"

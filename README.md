@@ -586,7 +586,7 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 | install スクリプト | `--ignore-scripts` で実行しない。ただし RE2 で正規表現（`matchStrings` など）を検証するため、`re2` だけ `npm rebuild` で有効化する。RE2 を読み込めなければ失敗にする |
 
 - バージョンの更新は**手動**（`env:` の文字列は Renovate の更新対象外）。公開から 7 日を越えたバージョンだけを選ぶこと。バージョンは workflow の `RENOVATE_VERSION` にだけ書く（README には数値を書かない）
-- ファイル引数は渡さない。渡すと global config として検証され、repo config に対して誤検知する
+- 検出したファイルだけを引数に渡し、`--no-global` で repo config として検証する。`--no-global` が無いと global config として検証され、repo config に対して誤検知する。引数を渡さないと `package.json` 内の `renovate` キーまで検証対象になり、上記の対象外の方針と食い違うため
 
 ### 呼び出し側スタブ
 
