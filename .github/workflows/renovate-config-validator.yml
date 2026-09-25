@@ -1,0 +1,124 @@
+name: renovate-config-validator
+
+# Renovate 設定ファイルの構文検証。
+#
+# actionlint の検査対象は .github/workflows/*.yml と .github/actions/** だけで、
+# renovate.json は見ない。schedule の cron 書式や存在しないオプション名を
+# 書き間違えても、Renovate が実行時に設定エラーの Issue を立てるまで気づけない
+# (= 依存更新 PR が黙って止まる)。renovate-config-validator は Renovate 自身が
+# 設定を読むときと同じスキーマ検証を行うため、その手前で PR 上で落とせる。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  workflow_call:
+    inputs:
+      version:
+        description: "renovate のバージョン。省略時はこのファイルの既定値 (RENOVATE_VERSION)。"
+        type: string
+        required: false
+        default: ""
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  renovate-config-validator:
+    name: renovate-config-validator (renovate.json syntax check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect Renovate config
+        id: detect
+        run: |
+          set -euo pipefail
+
+          # 検査対象は呼び出し元リポジトリの Renovate 設定 (repo config)。
+          # 設定ファイルを持たないリポジトリはスキップする。
+          # 探索対象は renovate 本体 (lib/config/app-strings.ts の configFileNames) に揃える。
+          # ここが狭いと、該当しないファイルの設定が壊れていても検証されず緑になる。
+          # package.json 内の "renovate" キーは本体も探索するが、package.json の存在だけでは
+          # 設定の有無を判定できないため対象外とする。validate ステップには検出したファイルを
+          # 明示的に渡し、package.json 内の "renovate" キーが検証されないようにしている。
+          found=false
+          files=()
+          for f in \
+            renovate.json renovate.jsonc renovate.json5 \
+            .github/renovate.json .github/renovate.jsonc .github/renovate.json5 \
+            .gitlab/renovate.json .gitlab/renovate.jsonc .gitlab/renovate.json5 \
+            .renovaterc .renovaterc.json .renovaterc.jsonc .renovaterc.json5; do
+            if [ -f "$f" ]; then
+              echo "検出: $f"
+              found=true
+              files+=("$f")
+            fi
+          done
+
+          if [ "$found" = "false" ]; then
+            echo "Renovate 設定ファイルが無いため検証をスキップします。"
+          fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+          # 検出したファイルは validate ステップへ空白区切りで渡す (パスに空白は含まれない)。
+          echo "files=${files[*]:-}" >> "$GITHUB_OUTPUT"
+
+      # renovate 44 系は engines が node ^24.11.0。runner の既定 Node に依存すると
+      # イメージ更新で突然動かなくなるため、明示的に入れる。
+      - name: Set up Node.js
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Validate Renovate config
+        if: steps.detect.outputs.found == 'true'
+        env:
+          # renovate は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が
+          # 再現性を保つ唯一の手段になる。この既定値が単一の信頼できる情報源 (SSoT)。
+          # env: の文字列なので Renovate の更新対象外で、更新は手動で行う。
+          # 手動更新のときは、公開から 7 日を越えたバージョンだけを選ぶ
+          # (.github/renovate.json の minimumReleaseAge と .pinact.yaml の min_age と
+          # 揃える。ここは機械的な検査が届かないので人の目だけが頼り)。
+          RENOVATE_VERSION: ${{ inputs.version || '44.97.4' }}
+          RENOVATE_CONFIG_FILES: ${{ steps.detect.outputs.files }}
+        # reusable workflow は呼び出し元リポジトリで動くため、この repo の lockfile を参照できない。
+        # バージョンは RENOVATE_VERSION で完全一致に固定しており、ad-hoc インストールは意図的。
+        run: | # zizmor: ignore[adhoc-packages]
+          set -euo pipefail
+
+          # 検出ステップで見つけたファイルだけを引数に渡す。引数なしだと package.json 内の
+          # "renovate" キーも検証対象になり、検出対象外のはずの設定で失敗するため。
+          # ファイルを渡すと既定では global config (自己ホスト用の設定) として検証され、
+          # repo config には無効なオプション名で誤検知するので、--no-global で repo config
+          # として検証させる。
+          #
+          # --strict: 警告 (非推奨オプションなど) も失敗として扱う。
+          #
+          # 取得した依存の install スクリプトは --ignore-scripts で実行しない。ただし
+          # そのままだと re2 のネイティブビルドも走らず、renovate は警告を出して
+          # JavaScript の RegExp にフォールバックする (--strict でも失敗しない)。
+          # RegExp は RE2 が拒否する先読み (?=...) / (?!...) などを通すため、
+          # matchStrings などの正規表現が実行時にだけ落ちる設定を見逃す。
+          # そこで re2 だけに限って install スクリプトを実行し、RE2 での検証を保証する。
+          dir="$RUNNER_TEMP/renovate"
+          mkdir -p "$dir"
+          npm install --prefix "$dir" --ignore-scripts --no-audit --no-fund \
+            "renovate@${RENOVATE_VERSION}"
+          npm rebuild --prefix "$dir" re2
+
+          # RE2 が読み込めないままだと検証精度が落ちるため、黙って進まず失敗させる。
+          node -e 'require(process.argv[1])' "$dir/node_modules/re2" || {
+            echo "::error::re2 を読み込めません。RE2 での正規表現検証ができないため失敗させます。"
+            exit 1
+          }
+
+          read -ra config_files <<< "$RENOVATE_CONFIG_FILES"
+          "$dir/node_modules/.bin/renovate-config-validator" --strict --no-global \
+            "${config_files[@]}"
