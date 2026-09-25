@@ -82,7 +82,9 @@ jobs:
           # (.github/renovate.json の minimumReleaseAge と .pinact.yaml の min_age と
           # 揃える。ここは機械的な検査が届かないので人の目だけが頼り)。
           RENOVATE_VERSION: ${{ inputs.version || '44.97.4' }}
-        run: |
+        # reusable workflow は呼び出し元リポジトリで動くため、この repo の lockfile を参照できない。
+        # バージョンは RENOVATE_VERSION で完全一致に固定しており、ad-hoc インストールは意図的。
+        run: | # zizmor: ignore[adhoc-packages]
           set -euo pipefail
 
           # 引数にファイルを渡すと global config (自己ホスト用の設定) として検証され、
