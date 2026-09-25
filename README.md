@@ -542,7 +542,7 @@ CLI は npm 経由で取得されるため SHA ピン留めができず、バー
 - **公開から 7 日を越えたバージョンだけを選ぶ。** 本リポジトリは `.github/dependabot.yml` の `cooldown.default-days` と `.pinact.yaml` の `min_age.value` で「公開直後の上流を取り込まない」を 7 日と定めているが、`FALLOW_VERSION` は `env:` の文字列なので Dependabot の cooldown も pinact の `min_age` も届かない。機械が検査しない経路なので、人の目で守る
 - **README の「入力」表の記述も併せて直す。**
 
-また、外部バイナリを取る既存 6 経路（`actionlint.yml` / `hadolint.yml` / `lychee.yml` / `pinact.yml` / `trivy.yml` / `.github/actions/setup-gitleaks/action.yml`）は `.sha256` を併せて取得して `sha256sum -c` で照合しているが、**fallow だけはこの照合を持たない**。npm レジストリ経由の取得にはリリースごとの公開チェックサムが無いためで、代わりに npm レジストリの整合性と fallow 自身のバイナリ署名検証（`fallow --version` が `verified: yes ... signed` を出す）に委ねている。任意コード実行の面は `npx --yes --ignore-scripts` で `postinstall` を実行しないことで抑えている。
+また、外部バイナリを取る既存 6 経路（`actionlint.yml` / `hadolint.yml` / `lychee.yml` / `pinact.yml` / `trivy.yml` / `.github/actions/setup-gitleaks/action.yml`）は `.sha256` を併せて取得して `sha256sum -c` で照合しているが、**npm レジストリ経由で取る fallow と `renovate-config-validator.yml` はこの照合を持たない**。npm レジストリ経由の取得にはリリースごとの公開チェックサムが無いためで、fallow は代わりに npm レジストリの整合性と fallow 自身のバイナリ署名検証（`fallow --version` が `verified: yes ... signed` を出す）に委ねている。任意コード実行の面は `npx --yes --ignore-scripts` で `postinstall` を実行しないことで抑えている（renovate 側は「`renovate-config-validator.yml`」節の「仕様」を参照）。
 
 ### 終了コードの扱い
 
@@ -587,6 +587,7 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 
 - バージョンの更新は**手動**（`env:` の文字列は Renovate の更新対象外）。公開から 7 日を越えたバージョンだけを選ぶこと。バージョンは workflow の `RENOVATE_VERSION` にだけ書く（README には数値を書かない）
 - 検出したファイルだけを引数に渡し、`--no-global` で repo config として検証する。`--no-global` が無いと global config として検証され、repo config に対して誤検知する。引数を渡さないと `package.json` 内の `renovate` キーまで検証対象になり、上記の対象外の方針と食い違うため
+- 取得物の照合は npm レジストリの整合性（`npm install` が照合する `integrity`）に委ねており、`.sha256` の照合は無い（fallow と同じく、npm 経由の取得にはリリースごとの公開チェックサムが無いため）。任意コード実行の面は `--ignore-scripts` で抑え、install スクリプトを実行するのは `npm rebuild` で有効化する `re2` だけに限っている
 
 ### 呼び出し側スタブ
 
