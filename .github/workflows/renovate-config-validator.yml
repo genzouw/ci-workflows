@@ -1,0 +1,89 @@
+name: renovate-config-validator
+
+# Renovate 設定ファイルの構文検証。
+#
+# actionlint の検査対象は .github/workflows/*.yml と .github/actions/** だけで、
+# renovate.json は見ない。schedule の cron 書式や存在しないオプション名を
+# 書き間違えても、Renovate が実行時に設定エラーの Issue を立てるまで気づけない
+# (= 依存更新 PR が黙って止まる)。renovate-config-validator は Renovate 自身が
+# 設定を読むときと同じスキーマ検証を行うため、その手前で PR 上で落とせる。
+
+on:
+  # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
+  workflow_call:
+    inputs:
+      version:
+        description: "renovate のバージョン。省略時はこのファイルの既定値 (RENOVATE_VERSION)。"
+        type: string
+        required: false
+        default: ""
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  renovate-config-validator:
+    name: renovate-config-validator (renovate.json syntax check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect Renovate config
+        id: detect
+        run: |
+          set -euo pipefail
+
+          # 検査対象は呼び出し元リポジトリの Renovate 設定 (repo config)。
+          # 設定ファイルを持たないリポジトリはスキップする。
+          found=false
+          for f in renovate.json .github/renovate.json .renovaterc.json; do
+            if [ -f "$f" ]; then
+              echo "検出: $f"
+              found=true
+            fi
+          done
+
+          if [ "$found" = "false" ]; then
+            echo "Renovate 設定ファイルが無いため検証をスキップします。"
+          fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+
+      # renovate 44 系は engines が node ^24.11.0。runner の既定 Node に依存すると
+      # イメージ更新で突然動かなくなるため、明示的に入れる。
+      - name: Set up Node.js
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Validate Renovate config
+        if: steps.detect.outputs.found == 'true'
+        env:
+          # renovate は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が
+          # 再現性を保つ唯一の手段になる。この既定値が単一の信頼できる情報源 (SSoT)。
+          # env: の文字列なので Renovate の更新対象外で、更新は手動で行う。
+          # 手動更新のときは、公開から 7 日を越えたバージョンだけを選ぶ
+          # (.github/renovate.json の minimumReleaseAge と .pinact.yaml の min_age と
+          # 揃える。ここは機械的な検査が届かないので人の目だけが頼り)。
+          RENOVATE_VERSION: ${{ inputs.version || '44.97.4' }}
+        run: |
+          set -euo pipefail
+
+          # 引数にファイルを渡すと global config (自己ホスト用の設定) として検証され、
+          # repo config には無効なオプション名で誤検知する。引数なしなら
+          # カレントディレクトリの repo config を自動検出して repo config として検証する。
+          #
+          # --strict: 警告 (非推奨オプションなど) も失敗として扱う。
+          # --ignore-scripts: 取得した依存の install スクリプトを実行しない。
+          # 副作用として re2 のネイティブビルドが走らず「RE2 not usable」の警告が出る。
+          # 影響は正規表現 (matchStrings など) の検証精度だけで、構文検証には効かない。
+          npx --yes --ignore-scripts --package "renovate@${RENOVATE_VERSION}" -- \
+            renovate-config-validator --strict

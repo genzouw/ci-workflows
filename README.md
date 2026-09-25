@@ -4,22 +4,23 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 
 ## 提供ワークフロー
 
-| ワークフロー            | 内容                                                                              | job 名 (= check context)               | paths フィルタ推奨                                                                                                       |
-| ----------------------- | --------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `gitleaks.yml`          | シークレット漏洩スキャン（全ブランチ履歴）                                        | `Scan for leaked secrets`              | なし（常時実行）                                                                                                         |
-| `trivy.yml`             | 脆弱性・設定ミス・シークレットの fs スキャン                                      | `Trivy filesystem scan`                | なし（常時実行）                                                                                                         |
-| `zizmor.yml`            | GitHub Actions ワークフローのセキュリティ監査                                     | `zizmor`                               | なし（常時実行）                                                                                                         |
-| `actionlint.yml`        | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止                    | `actionlint`                           | `.github/workflows/**`, `.github/actions/**`                                                                             |
-| `markdownlint.yml`      | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`）                    | `markdownlint-cli2`                    | `**/*.md`                                                                                                                |
-| `hadolint.yml`          | Dockerfile lint（Dockerfile が無ければスキップ）                                  | `Hadolint (Dockerfile lint)`           | `**/Dockerfile*`                                                                                                         |
-| `shellcheck.yml`        | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)`       | `**/*.sh`, `.github/actions/**`                                                                                          |
-| `free-policy.yml`       | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）                            | `Free-only policy check`               | なし（常時実行）                                                                                                         |
-| `dependency-review.yml` | PR で追加・更新される依存の脆弱性とライセンスを判定（PR 限定）                    | `dependency-review (new dependencies)` | なし（`pull_request` のみ）                                                                                              |
-| `pinact.yml`            | Action 参照のアノテーション整合 + リリース経過日数（cooldown）                    | `pinact (action pin verification)`     | `.github/workflows/**`, `.github/actions/**`, `.pinact.yaml`, `.pinact.yml`, `.github/pinact.yaml`, `.github/pinact.yml` |
-| `typos.yml`             | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                  | なし（常時実行）                                                                                                         |
-| `semantic-pr.yml`       | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)`   | なし（`pull_request` のみ）                                                                                              |
-| `lychee.yml`            | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`           | `**/*.md`, `**/*.html`, `lychee.toml`                                                                                    |
-| `fallow.yml`            | TS/JS の変更ファイル品質ゲート（未使用コード・重複・複雑度）（PR 限定）           | `fallow (changed-file quality gate)`   | TS/JS の各拡張子, `**/package.json`, `.fallowrc.*`, `fallow.toml`                                                        |
+| ワークフロー                    | 内容                                                                              | job 名 (= check context)                                 | paths フィルタ推奨                                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `gitleaks.yml`                  | シークレット漏洩スキャン（全ブランチ履歴）                                        | `Scan for leaked secrets`                                | なし（常時実行）                                                                                                         |
+| `trivy.yml`                     | 脆弱性・設定ミス・シークレットの fs スキャン                                      | `Trivy filesystem scan`                                  | なし（常時実行）                                                                                                         |
+| `zizmor.yml`                    | GitHub Actions ワークフローのセキュリティ監査                                     | `zizmor`                                                 | なし（常時実行）                                                                                                         |
+| `actionlint.yml`                | ワークフロー lint + SHAピン留め強制 + pull_request_target 禁止                    | `actionlint`                                             | `.github/workflows/**`, `.github/actions/**`                                                                             |
+| `markdownlint.yml`              | Markdown lint（設定は呼び出し元の `.markdownlint-cli2.jsonc`）                    | `markdownlint-cli2`                                      | `**/*.md`                                                                                                                |
+| `hadolint.yml`                  | Dockerfile lint（Dockerfile が無ければスキップ）                                  | `Hadolint (Dockerfile lint)`                             | `**/Dockerfile*`                                                                                                         |
+| `shellcheck.yml`                | シェルスクリプト lint + composite action の `run:` lint（対象が無ければスキップ） | `ShellCheck (shell script lint)`                         | `**/*.sh`, `.github/actions/**`                                                                                          |
+| `free-policy.yml`               | 完全無料ポリシー違反の検出（secrets ホワイトリスト等）                            | `Free-only policy check`                                 | なし（常時実行）                                                                                                         |
+| `dependency-review.yml`         | PR で追加・更新される依存の脆弱性とライセンスを判定（PR 限定）                    | `dependency-review (new dependencies)`                   | なし（`pull_request` のみ）                                                                                              |
+| `pinact.yml`                    | Action 参照のアノテーション整合 + リリース経過日数（cooldown）                    | `pinact (action pin verification)`                       | `.github/workflows/**`, `.github/actions/**`, `.pinact.yaml`, `.pinact.yml`, `.github/pinact.yaml`, `.github/pinact.yml` |
+| `typos.yml`                     | ソースコード・ドキュメント横断のスペルミス検出                                    | `typos (spell check)`                                    | なし（常時実行）                                                                                                         |
+| `semantic-pr.yml`               | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)`                     | なし（`pull_request` のみ）                                                                                              |
+| `lychee.yml`                    | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`                             | `**/*.md`, `**/*.html`, `lychee.toml`                                                                                    |
+| `fallow.yml`                    | TS/JS の変更ファイル品質ゲート（未使用コード・重複・複雑度）（PR 限定）           | `fallow (changed-file quality gate)`                     | TS/JS の各拡張子, `**/package.json`, `.fallowrc.*`, `fallow.toml`                                                        |
+| `renovate-config-validator.yml` | Renovate 設定 (`renovate.json` 系) の構文検証（設定が無ければスキップ）           | `renovate-config-validator (renovate.json syntax check)` | `renovate.json`, `.github/renovate.json`, `.renovaterc.json`                                                             |
 
 ## 提供 composite action
 
@@ -405,8 +406,8 @@ jobs:
 
 上の比較は ci-workflows 配下の既存ワークフローと「各リポジトリの ESLint」を見たもので、配布先リポジトリの実体を確認すると **2 本が既に knip を持っている**。
 
-| リポジトリ      | knip                                                       |
-| --------------- | ---------------------------------------------------------- |
+| リポジトリ      | knip                                                         |
+| --------------- | ------------------------------------------------------------ |
 | `toique`        | `.github/workflows/knip.yml` / `package.json` に `knip` 依存 |
 | `hyakuninissyu` | 同上 + `knip.jsonc`                                          |
 
@@ -477,10 +478,10 @@ jobs:
 
 ### 入力
 
-| 入力             | 既定   | 用途                                                                                          |
-| ---------------- | ------ | --------------------------------------------------------------------------------------------- |
-| `version`        | `""`   | fallow CLI のバージョン。空なら本ワークフロー側の既定値（`FALLOW_VERSION`、SSoT）を使う        |
-| `fail_on_issues` | `true` | `false` にすると指摘があっても job は成功する（段階導入用）                                    |
+| 入力             | 既定   | 用途                                                                                    |
+| ---------------- | ------ | --------------------------------------------------------------------------------------- |
+| `version`        | `""`   | fallow CLI のバージョン。空なら本ワークフロー側の既定値（`FALLOW_VERSION`、SSoT）を使う |
+| `fail_on_issues` | `true` | `false` にすると指摘があっても job は成功する（段階導入用）                             |
 
 `version` 入力そのものの既定値は空文字で、実際に使われるバージョンは `.github/workflows/fallow.yml` の `FALLOW_VERSION` が持つ。**バージョンのリテラルをこの表に書かない**のは、手動更新（Dependabot の対象外）で片方だけ直り README が古い値を指し続けるのを避けるため。現在の値は [`fallow.yml` の `FALLOW_VERSION`](.github/workflows/fallow.yml) を参照すること。
 
@@ -521,10 +522,10 @@ Action を使うには対象全リポジトリの許可リスト変更が必要�
 
 解析は **1 回だけ**走らせて JSON を中間成果物（`${{ runner.temp }}/fallow-audit.json`）にし、そこから `fallow report --from` で 2 つの表示面を描画する。
 
-| 表示面               | 形式                 | 出る場所                       |
-| -------------------- | -------------------- | ------------------------------ |
-| インラインの指摘     | `github-annotations` | PR の Files changed の該当行   |
-| 一覧（件数と内訳表） | `github-summary`     | Actions のジョブサマリー       |
+| 表示面               | 形式                 | 出る場所                     |
+| -------------------- | -------------------- | ---------------------------- |
+| インラインの指摘     | `github-annotations` | PR の Files changed の該当行 |
+| 一覧（件数と内訳表） | `github-summary`     | Actions のジョブサマリー     |
 
 `--format human` を標準出力に流すだけだと、赤くなった開発者は Actions のジョブログを開いて該当行まで遡らないと何を指摘されたのか分からない。`fail_on_issues: false`（段階導入用）ではジョブが緑のまま結果がログの奥に埋まるため、「報告のみ」が誰にも報告されない状態になる。
 
@@ -545,11 +546,11 @@ CLI は npm 経由で取得されるため SHA ピン留めができず、バー
 
 ### 終了コードの扱い
 
-| コード   | 意味                    | 本ワークフローの挙動                    |
-| -------- | ----------------------- | --------------------------------------- |
-| 0        | 指摘なし / verdict pass | 成功                                    |
-| 1        | 指摘あり / verdict fail | `fail_on_issues` に従う（既定は失敗）   |
-| 2 以上   | fallow 自体の失敗       | **`fail_on_issues` と無関係に常に失敗** |
+| コード | 意味                    | 本ワークフローの挙動                    |
+| ------ | ----------------------- | --------------------------------------- |
+| 0      | 指摘なし / verdict pass | 成功                                    |
+| 1      | 指摘あり / verdict fail | `fail_on_issues` に従う（既定は失敗）   |
+| 2 以上 | fallow 自体の失敗       | **`fail_on_issues` と無関係に常に失敗** |
 
 fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は runtime coverage サイドカー、7 はネットワーク障害、10〜13 はアップロード系）だが、本ワークフローは `case` の `*)` で 2 以上を一括して落とすため、個別に列挙しない（[fallow README「Output and exit codes」](https://github.com/fallow-rs/fallow#output-and-exit-codes)）。
 
@@ -560,6 +561,56 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 ### 課金について
 
 静的解析部分は MIT ライセンスで、ライセンスキー・API キー・Secrets をいずれも必要としない（[LICENSE](https://github.com/fallow-rs/fallow/blob/main/LICENSE) / [docs.fallow.tools](https://docs.fallow.tools/)「Free static analysis of code and styles」）。有料なのは本番トレースを取り込む Fallow Runtime だけで、本ワークフローはこれを使わない。
+
+## `renovate-config-validator.yml`（Renovate 設定の構文検証）
+
+`actionlint.yml` の検査対象は `.github/workflows/**` と `.github/actions/**` だけで、`renovate.json` は見ない。
+`schedule` の cron 書式や存在しないオプション名を書き間違えても、Renovate が実行時に設定エラーを報告するまで気づけず、依存更新 PR が黙って止まる。
+
+`renovate-config-validator` は Renovate 自身と同じスキーマ検証を行う。次のいずれかが存在すれば検証し、どれも無ければスキップして成功する。
+
+- `renovate.json`
+- `.github/renovate.json`
+- `.renovaterc.json`
+
+### 仕様
+
+| 項目               | 内容                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| バージョン         | 既定 `44.97.4`（`inputs.version` で上書き可）。SHA ピンできない npm 経由の取得のため、この既定値が単一の信頼できる情報源 |
+| 判定               | `--strict`。非推奨オプションなどの警告も失敗にする                                                                       |
+| Node.js            | 24 を `actions/setup-node` で入れる（renovate 44 系の engines が `^24.11.0`）                                            |
+| install スクリプト | `--ignore-scripts` で実行しない。正規表現（`matchStrings` など）の検証精度だけが下がり、構文検証には影響しない           |
+
+- バージョンの更新は**手動**（`env:` の文字列は Renovate の更新対象外）。公開から 7 日を越えたバージョンだけを選ぶこと
+- ファイル引数は渡さない。渡すと global config として検証され、repo config に対して誤検知する
+
+### 呼び出し側スタブ
+
+`paths` を Renovate 設定に絞る。設定を触らない PR で Node.js と renovate を取得しないための絞り込みで、必須チェックにする場合は paths フィルタを付けないこと（運用契約 2 と同じ理由）。
+
+```yaml
+name: Renovate config
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'renovate.json'
+      - '.github/renovate.json'
+      - '.renovaterc.json'
+
+concurrency:
+  group: renovate-config-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  renovate-config-validator:
+    uses: genzouw/ci-workflows/.github/workflows/renovate-config-validator.yml@<full-commit-SHA> # vX.Y.Z
+```
 
 ## 運用契約（重要）
 
