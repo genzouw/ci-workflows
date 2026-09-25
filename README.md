@@ -20,7 +20,7 @@ genzouw 配下の公開リポジトリで共通利用する reusable CI workflow
 | `semantic-pr.yml`               | PR タイトルの Conventional Commits 準拠を検査（PR 限定）                          | `semantic-pr (conventional commits)`                     | なし（`pull_request` のみ）                                                                                              |
 | `lychee.yml`                    | ドキュメント中のリンク切れ検出（外部 HTTP を伴う）                                | `lychee (broken link check)`                             | `**/*.md`, `**/*.html`, `lychee.toml`                                                                                    |
 | `fallow.yml`                    | TS/JS の変更ファイル品質ゲート（未使用コード・重複・複雑度）（PR 限定）           | `fallow (changed-file quality gate)`                     | TS/JS の各拡張子, `**/package.json`, `.fallowrc.*`, `fallow.toml`                                                        |
-| `renovate-config-validator.yml` | Renovate 設定 (`renovate.json` 系) の構文検証（設定が無ければスキップ）           | `renovate-config-validator (renovate.json syntax check)` | `renovate.json`, `.github/renovate.json`, `.renovaterc.json`                                                             |
+| `renovate-config-validator.yml` | Renovate 設定 (`renovate.json` 系) の構文検証（設定が無ければスキップ）           | `renovate-config-validator (renovate.json syntax check)` | `renovate.json*`, `.github/renovate.json*`, `.gitlab/renovate.json*`, `.renovaterc*`                                     |
 
 ## 提供 composite action
 
@@ -567,11 +567,14 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 `actionlint.yml` の検査対象は `.github/workflows/**` と `.github/actions/**` だけで、`renovate.json` は見ない。
 `schedule` の cron 書式や存在しないオプション名を書き間違えても、Renovate が実行時に設定エラーを報告するまで気づけず、依存更新 PR が黙って止まる。
 
-`renovate-config-validator` は Renovate 自身と同じスキーマ検証を行う。次のいずれかが存在すれば検証し、どれも無ければスキップして成功する。
+`renovate-config-validator` は Renovate 自身と同じスキーマ検証を行う。Renovate 本体の探索対象（`lib/config/app-strings.ts` の `configFileNames`）に揃えた次のいずれかが存在すれば検証し、どれも無ければスキップして成功する。
 
-- `renovate.json`
-- `.github/renovate.json`
-- `.renovaterc.json`
+- `renovate.json` / `renovate.jsonc` / `renovate.json5`
+- `.github/renovate.json` / `.github/renovate.jsonc` / `.github/renovate.json5`
+- `.gitlab/renovate.json` / `.gitlab/renovate.jsonc` / `.gitlab/renovate.json5`
+- `.renovaterc` / `.renovaterc.json` / `.renovaterc.jsonc` / `.renovaterc.json5`
+
+`package.json` 内の `renovate` キーは、`package.json` の存在だけでは設定の有無を判定できないため対象外（検証もされない）。
 
 ### 仕様
 
@@ -587,7 +590,7 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 
 ### 呼び出し側スタブ
 
-`paths` を Renovate 設定に絞る。設定を触らない PR で Node.js と renovate を取得しないための絞り込みで、必須チェックにする場合は paths フィルタを付けないこと（運用契約 2 と同じ理由）。
+`paths` を Renovate 設定に絞る（GitHub の `paths` は `{,c,5}` のようなブレース展開に対応しないため `*` で書く）。設定を触らない PR で Node.js と renovate を取得しないための絞り込みで、必須チェックにする場合は paths フィルタを付けないこと（運用契約 2 と同じ理由）。
 
 ```yaml
 name: Renovate config
@@ -596,9 +599,10 @@ on:
   pull_request:
     branches: [main, master]
     paths:
-      - 'renovate.json'
-      - '.github/renovate.json'
-      - '.renovaterc.json'
+      - 'renovate.json*'
+      - '.github/renovate.json*'
+      - '.gitlab/renovate.json*'
+      - '.renovaterc*'
 
 concurrency:
   group: renovate-config-${{ github.ref }}

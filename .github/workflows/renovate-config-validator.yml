@@ -42,8 +42,16 @@ jobs:
 
           # 検査対象は呼び出し元リポジトリの Renovate 設定 (repo config)。
           # 設定ファイルを持たないリポジトリはスキップする。
+          # 探索対象は renovate 本体 (lib/config/app-strings.ts の configFileNames) に揃える。
+          # ここが狭いと、該当しないファイルの設定が壊れていても検証されず緑になる。
+          # package.json 内の "renovate" キーは本体も探索するが、package.json の存在だけでは
+          # 設定の有無を判定できないため対象外とする。
           found=false
-          for f in renovate.json .github/renovate.json .renovaterc.json; do
+          for f in \
+            renovate.json renovate.jsonc renovate.json5 \
+            .github/renovate.json .github/renovate.jsonc .github/renovate.json5 \
+            .gitlab/renovate.json .gitlab/renovate.jsonc .gitlab/renovate.json5 \
+            .renovaterc .renovaterc.json .renovaterc.jsonc .renovaterc.json5; do
             if [ -f "$f" ]; then
               echo "検出: $f"
               found=true
