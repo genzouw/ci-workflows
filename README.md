@@ -580,7 +580,7 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 | バージョン         | 既定 `44.97.4`（`inputs.version` で上書き可）。SHA ピンできない npm 経由の取得のため、この既定値が単一の信頼できる情報源 |
 | 判定               | `--strict`。非推奨オプションなどの警告も失敗にする                                                                       |
 | Node.js            | 24 を `actions/setup-node` で入れる（renovate 44 系の engines が `^24.11.0`）                                            |
-| install スクリプト | `--ignore-scripts` で実行しない。正規表現（`matchStrings` など）の検証精度だけが下がり、構文検証には影響しない           |
+| install スクリプト | `--ignore-scripts` で実行しない。ただし RE2 で正規表現（`matchStrings` など）を検証するため、`re2` だけ `npm rebuild` で有効化する。RE2 を読み込めなければ失敗にする |
 
 - バージョンの更新は**手動**（`env:` の文字列は Renovate の更新対象外）。公開から 7 日を越えたバージョンだけを選ぶこと
 - ファイル引数は渡さない。渡すと global config として検証され、repo config に対して誤検知する

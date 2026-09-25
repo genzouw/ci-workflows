@@ -82,8 +82,23 @@ jobs:
           # カレントディレクトリの repo config を自動検出して repo config として検証する。
           #
           # --strict: 警告 (非推奨オプションなど) も失敗として扱う。
-          # --ignore-scripts: 取得した依存の install スクリプトを実行しない。
-          # 副作用として re2 のネイティブビルドが走らず「RE2 not usable」の警告が出る。
-          # 影響は正規表現 (matchStrings など) の検証精度だけで、構文検証には効かない。
-          npx --yes --ignore-scripts --package "renovate@${RENOVATE_VERSION}" -- \
-            renovate-config-validator --strict
+          #
+          # 取得した依存の install スクリプトは --ignore-scripts で実行しない。ただし
+          # そのままだと re2 のネイティブビルドも走らず、renovate は警告を出して
+          # JavaScript の RegExp にフォールバックする (--strict でも失敗しない)。
+          # RegExp は RE2 が拒否する先読み (?=...) / (?!...) などを通すため、
+          # matchStrings などの正規表現が実行時にだけ落ちる設定を見逃す。
+          # そこで re2 だけに限って install スクリプトを実行し、RE2 での検証を保証する。
+          dir="$RUNNER_TEMP/renovate"
+          mkdir -p "$dir"
+          npm install --prefix "$dir" --ignore-scripts --no-audit --no-fund \
+            "renovate@${RENOVATE_VERSION}"
+          npm rebuild --prefix "$dir" re2
+
+          # RE2 が読み込めないままだと検証精度が落ちるため、黙って進まず失敗させる。
+          node -e 'require(process.argv[1])' "$dir/node_modules/re2" || {
+            echo "::error::re2 を読み込めません。RE2 での正規表現検証ができないため失敗させます。"
+            exit 1
+          }
+
+          "$dir/node_modules/.bin/renovate-config-validator" --strict
