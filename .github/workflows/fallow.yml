@@ -146,7 +146,22 @@ jobs:
             if [ ! -f package-lock.json ]; then
               echo "npm の lockfile がありません。npm install で近似します。"
             fi
-            if ! npm install --ignore-scripts --no-audit --no-fund; then
+            # npm は peer 依存の衝突を ERESOLVE で拒否するが、bun は拒否しない。
+            # bun.lock しか持たないリポジトリでは、bun なら入る依存が npm では入らない
+            # ことがある (hyakuninissyu: @babel/core@8 と @vue/vue3-jest の peer 7.x)。
+            # fallow が読むのは各パッケージの exports であり peer の整合ではないため、
+            # 失敗したときに限り --legacy-peer-deps で peer の検査を外して再試行する。
+            # 最初から付けないのは、通常どおり入るリポジトリで peer の自動インストールを
+            # 止めて node_modules を欠けさせないため。
+            if npm install --ignore-scripts --no-audit --no-fund; then
+              installed=1
+            else
+              echo "::warning::npm install に失敗しました。peer 依存の衝突の可能性があるため --legacy-peer-deps で再試行します。"
+              if npm install --ignore-scripts --no-audit --no-fund --legacy-peer-deps; then
+                installed=1
+              fi
+            fi
+            if [ "${installed}" -eq 0 ]; then
               # node_modules 無しの解析は誤検知が増えることが実測で分かっている
               # (dice-api で dead-code 5 件 -> 6 件)。そのまま audit を走らせると
               # 「根拠の弱い赤」で無関係な PR を落とすことになるため、判定そのものを
