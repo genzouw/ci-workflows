@@ -17,7 +17,7 @@ files:
 # 値は .github/renovate.json の `minimumReleaseAge` と揃えること。
 # 揃っていないと、Renovate が出した更新 PR が pinact で落ちる / その逆が起きる。
 min_age:
-  value: 7
+  value: 1
   always: true
 
 rules:
