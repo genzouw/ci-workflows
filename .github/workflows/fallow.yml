@@ -179,9 +179,9 @@ jobs:
           # 再現性を保つ唯一の手段になる。この既定値が単一の信頼できる情報源 (SSoT)。
           # npm ecosystem のマニフェストではないため Dependabot の更新対象外で、
           # 更新は手動で行う。手動更新のときに守ること:
-          #   1. 公開から 7 日を越えたバージョンだけを選ぶ。本リポジトリは
-          #      .github/dependabot.yml の cooldown.default-days と .pinact.yaml の
-          #      min_age.value で「公開直後の上流を取り込まない」を 7 日と定めているが、
+          #   1. 公開から 1 日を越えたバージョンだけを選ぶ。本リポジトリは
+          #      .github/renovate.json の minimumReleaseAge と .pinact.yaml の
+          #      min_age.value で「公開直後の上流を取り込まない」を 1 日と定めているが、
           #      ここは env: の文字列なのでどちらの機械的検査も届かない。守れるのは人の目だけ。
           #   2. README の「入力」表と「CLI バージョンの更新は手動」節も併せて直す。
           FALLOW_VERSION: ${{ inputs.version || '3.26.0' }}
