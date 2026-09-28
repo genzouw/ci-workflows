@@ -184,10 +184,13 @@ SHA ピン留めを通過したあとに残る次の 2 つの穴を、`pinact.ym
 - **`.github/renovate.json` の `minimumReleaseAge` と同じ値にすること。**
   値がずれていると、Renovate が出した更新 PR が `pinact` の min-age で落ち続ける
 
+次の例は既定の 7 日に合わせたもの。Renovate 側を縮める場合は、`with: { min_age: N }` か
+`.pinact.yaml` の `min_age.value` も同じ日数にする（本リポジトリは `.github/renovate.json` と `.pinact.yaml` をどちらも 1 日にしている）。
+
 ```json
 // .github/renovate.json
 {
-  "minimumReleaseAge": "1 day"
+  "minimumReleaseAge": "7 days"
 }
 ```
 
