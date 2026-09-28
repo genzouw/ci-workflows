@@ -7,16 +7,8 @@
   "semanticCommits": "enabled",
   "semanticCommitScope": "deps",
   "timezone": "Asia/Tokyo",
-  "schedule": [
-    "* * * * 1"
-  ],
-  "description": [
-    "schedule は Dependabot の schedule: weekly/monday (実質 09:00 JST 限定) の完全な移植ではない。",
-    "Renovate の cron schedule は分フィールドに * を必須とする仕様で、0 9 * * 1 のような時刻固定は",
-    "config validator が `Invalid schedule: ... doesn't have * as minutes` で拒否する。",
-    "そのため時刻の限定はできず、月曜終日を許容範囲としている。"
-  ],
-  "minimumReleaseAge": "7 days",
+  "minimumReleaseAge": "1 day",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
   "prConcurrentLimit": 5,
   "labels": [
     "dependencies"
@@ -26,8 +18,9 @@
   ],
   "vulnerabilityAlerts": {
     "description": [
-      "脆弱性修正は minimumReleaseAge と schedule の対象外にして即時 PR にする。",
-      "Dependabot の cooldown が security updates に効かなかったのと同じ挙動を保つため。"
+      "脆弱性修正は minimumReleaseAge の対象外にして即時 PR にする。",
+      "Dependabot の cooldown が security updates に効かなかったのと同じ挙動を保つため。",
+      "トップレベルの schedule は現在ないが、将来戻したときも脆弱性修正を待たせないよう schedule: [] を残す。"
     ],
     "minimumReleaseAge": null,
     "schedule": [],
