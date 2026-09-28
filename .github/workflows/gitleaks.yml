@@ -34,7 +34,7 @@ jobs:
         # 絶対パス + full-commit-SHA が必要 (README「提供 composite action」参照)。
         # SHA は本リポジトリに action.yml を追加したコミットを指しており、
         # action.yml を変更する際は同じ PR 内でこの SHA も更新すること。
-        uses: genzouw/ci-workflows/.github/actions/setup-gitleaks@5e15aa64dd624470219ee46aee1cf86d108d81a9 # v1.1.0 予定 (マージ後にタグ付け)
+        uses: genzouw/ci-workflows/.github/actions/setup-gitleaks@25d9ccba55e73641a6998b24fe89ddfbb020beed # v1.4.1 予定 (マージ後にタグ付け)
 
       - name: Run gitleaks
         run: |
@@ -50,7 +50,7 @@ jobs:
 
       - name: Upload SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
