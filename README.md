@@ -490,7 +490,7 @@ jobs:
 | `version`        | `""`   | fallow CLI のバージョン。空なら本ワークフロー側の既定値（`FALLOW_VERSION`、SSoT）を使う |
 | `fail_on_issues` | `true` | `false` にすると指摘があっても job は成功する（段階導入用）                             |
 
-`version` 入力そのものの既定値は空文字で、実際に使われるバージョンは `.github/workflows/fallow.yml` の `FALLOW_VERSION` が持つ。**バージョンのリテラルをこの表に書かない**のは、手動更新（Dependabot の対象外）で片方だけ直り README が古い値を指し続けるのを避けるため。現在の値は [`fallow.yml` の `FALLOW_VERSION`](.github/workflows/fallow.yml) を参照すること。
+`version` 入力そのものの既定値は空文字で、実際に使われるバージョンは `.github/workflows/fallow.yml` の `FALLOW_VERSION` が持つ。**バージョンのリテラルをこの表に書かない**のは、手動更新（Renovate の対象外）で片方だけ直り README が古い値を指し続けるのを避けるため。現在の値は [`fallow.yml` の `FALLOW_VERSION`](.github/workflows/fallow.yml) を参照すること。
 
 ### 公式 Action（`fallow-rs/fallow`）を使わない理由
 
@@ -543,7 +543,7 @@ Action を使うには対象全リポジトリの許可リスト変更が必要�
 
 CLI は npm 経由で取得されるため SHA ピン留めができず、バージョン固定が再現性を保つ唯一の手段になる。そのため本ワークフローの `version` 入力の既定値を単一の信頼できる情報源 (SSoT) とする。
 
-**`package.json` などのマニフェストではないため Dependabot の更新対象外**であり、更新は手動で行う（`gitleaks` のバージョンを composite action の `inputs.version` 既定値で一元管理しているのと同じ運用）。
+**`package.json` などのマニフェストではないため Renovate の更新対象外**であり、更新は手動で行う（`gitleaks` のバージョンを composite action の `inputs.version` 既定値で一元管理しているのと同じ運用）。
 
 手動更新のときは次の 2 点を守る。
 
