@@ -66,6 +66,9 @@ jobs:
           fi
           echo "${expected_sha}  hadolint" | sha256sum -c -
           chmod +x hadolint
+          # 起動できることまでここで確かめる。本リポジトリには Dockerfile が無く、
+          # Run hadolint は何もせず終わるため、ここで実行しないと起動できない版でも CI が通る。
+          ./hadolint --version
 
       - name: Run hadolint
         id: lint
@@ -91,9 +94,9 @@ jobs:
         if: always() && steps.lint.outcome == 'failure'
         run: |
           set -eu
-          echo "::warning title=hadolint::hadolint (${HADOLINT_VERSION}) が指摘を検出しました。Run hadolint のログを確認してください。"
+          echo "::warning title=hadolint::hadolint (${HADOLINT_VERSION}) が指摘を検出したか、実行に失敗しました。Run hadolint のログを確認してください。"
           {
-            echo "### :warning: hadolint (${HADOLINT_VERSION}) が指摘を検出しました"
+            echo "### :warning: hadolint (${HADOLINT_VERSION}) が指摘を検出したか、実行に失敗しました"
             echo
-            echo "このジョブは指摘があっても成功扱いです (continue-on-error)。指摘の内容は \`Run hadolint\` のログにあります。"
+            echo "このジョブは Run hadolint が失敗しても成功扱いです (continue-on-error)。詳細は \`Run hadolint\` のログにあります。"
           } >> "${GITHUB_STEP_SUMMARY}"
