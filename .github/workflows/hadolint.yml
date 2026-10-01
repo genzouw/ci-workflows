@@ -26,15 +26,14 @@ jobs:
     name: Hadolint (Dockerfile lint)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # 既存 Dockerfile の DL3008/DL3018 等の指摘を片付けるまでは赤検知にしない。
-    # 整備完了後に continue-on-error を外して赤検知に切り替える。
-    continue-on-error: true
     env:
       # 版は Renovate (.github/renovate.json の customManagers) が更新する。
       # 利用側リポジトリの pre-commit のフック (hadolint/hadolint) と版がずれると、
       # ローカルと CI で指摘が食い違う (genzouw/trim-text#253)。
+      # 版を上げる PR では、下の Install hadolint が通ることを CI で確認する。
+      # 上流は v2.15.0 でチェックサムの配布形式を変えており、形式が変わると版だけ上げても動かない。
       # renovate: datasource=github-releases depName=hadolint/hadolint
-      HADOLINT_VERSION: v2.12.0
+      HADOLINT_VERSION: v2.15.1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,24 +43,36 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           set -eu
-          # 供給網攻撃対策として公式の .sha256 を併せて取得し整合性検証を行う。
-          # 公式 .sha256 にはオリジナルのファイル名が記載されるため、
-          # ハッシュのみを抜き出してローカル保存名と照合する。
+          # 供給網攻撃対策として公式のチェックサムを併せて取得し整合性検証を行う。
+          # v2.15.0 以降はファイルごとの .sha256 が無く、全アセット分をまとめた
+          # checksums.sha256 (`<hash> *<アセット名>` 形式) だけが配布される。
+          # 該当アセットの行からハッシュを抜き出し、ローカル保存名と照合する。
+          asset=hadolint-linux-x86_64
+          base_url="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}"
           curl --fail --silent --show-error --location \
             --retry 3 --retry-all-errors --retry-delay 2 \
             --connect-timeout 10 --max-time 120 \
             -o hadolint \
-            "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+            "${base_url}/${asset}"
           curl --fail --silent --show-error --location \
             --retry 3 --retry-all-errors --retry-delay 2 \
             --connect-timeout 10 --max-time 120 \
-            -o hadolint.sha256 \
-            "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64.sha256"
-          expected_sha=$(awk '{print $1}' hadolint.sha256)
+            -o checksums.sha256 \
+            "${base_url}/checksums.sha256"
+          expected_sha=$(awk -v asset="*${asset}" '$2 == asset {print $1}' checksums.sha256)
+          if [ -z "${expected_sha}" ]; then
+            echo "::error::checksums.sha256 に ${asset} の行がありません。"
+            exit 1
+          fi
           echo "${expected_sha}  hadolint" | sha256sum -c -
           chmod +x hadolint
 
       - name: Run hadolint
+        # 既存 Dockerfile の DL3008/DL3018 等の指摘を片付けるまでは赤検知にしない。
+        # 整備完了後に continue-on-error を外して赤検知に切り替える。
+        # ジョブではなくこの step に付けているのは、Install hadolint の失敗まで
+        # 握りつぶすと、hadolint が実行されなくなっても誰も気づけないため。
+        continue-on-error: true
         run: |
           set -eu
           # リポジトリ内の全 Dockerfile を対象に lint する。
