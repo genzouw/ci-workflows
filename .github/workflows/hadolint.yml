@@ -68,6 +68,7 @@ jobs:
           chmod +x hadolint
 
       - name: Run hadolint
+        id: lint
         # 既存 Dockerfile の DL3008/DL3018 等の指摘を片付けるまでは赤検知にしない。
         # 整備完了後に continue-on-error を外して赤検知に切り替える。
         # ジョブではなくこの step に付けているのは、Install hadolint の失敗まで
@@ -83,3 +84,16 @@ jobs:
           fi
           printf 'lint 対象: %s\n' "${dockerfiles[@]}"
           "${RUNNER_TEMP}/hadolint" "${dockerfiles[@]}"
+
+      # continue-on-error で握りつぶした失敗を、ログを開かなくても見えるようにする。
+      # 握りつぶした step の outcome は failure のまま残るので、それで判定する。
+      - name: Report hadolint findings
+        if: always() && steps.lint.outcome == 'failure'
+        run: |
+          set -eu
+          echo "::warning title=hadolint::hadolint (${HADOLINT_VERSION}) が指摘を検出しました。Run hadolint のログを確認してください。"
+          {
+            echo "### :warning: hadolint (${HADOLINT_VERSION}) が指摘を検出しました"
+            echo
+            echo "このジョブは指摘があっても成功扱いです (continue-on-error)。指摘の内容は \`Run hadolint\` のログにあります。"
+          } >> "${GITHUB_STEP_SUMMARY}"
