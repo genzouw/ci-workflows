@@ -185,7 +185,7 @@ SHA ピン留めを通過したあとに残る次の 2 つの穴を、`pinact.ym
   値がずれていると、Renovate が出した更新 PR が `pinact` の min-age で落ち続ける
 
 次の例は既定の 7 日に合わせたもの。Renovate 側を縮める場合は、`with: { min_age: N }` か
-`.pinact.yaml` の `min_age.value` も同じ日数にする（本リポジトリは `.github/renovate.json` と `.pinact.yaml` をどちらも 1 日にしている）。
+`.pinact.yaml` の `min_age.value` も同じ日数にする（本リポジトリは `.github/renovate.json` と `.pinact.yaml` をどちらも 3 日にしている）。
 
 ```json
 // .github/renovate.json
@@ -547,7 +547,7 @@ CLI は npm 経由で取得されるため SHA ピン留めができず、バー
 
 手動更新のときは次の 2 点を守る。
 
-- **公開から 1 日を越えたバージョンだけを選ぶ。** 本リポジトリは `.github/renovate.json` の `minimumReleaseAge` と `.pinact.yaml` の `min_age.value` で「公開直後の上流を取り込まない」を 1 日と定めているが、`FALLOW_VERSION` は `env:` の文字列なので Renovate の `minimumReleaseAge` も pinact の `min_age` も届かない。機械が検査しない経路なので、人の目で守る
+- **公開から 3 日を越えたバージョンだけを選ぶ。** 本リポジトリは `.github/renovate.json` の `minimumReleaseAge` と `.pinact.yaml` の `min_age.value` で「公開直後の上流を取り込まない」を 3 日と定めているが、`FALLOW_VERSION` は `env:` の文字列なので Renovate の `minimumReleaseAge` も pinact の `min_age` も届かない。機械が検査しない経路なので、人の目で守る
 - **README の「入力」表の記述も併せて直す。**
 
 また、外部バイナリを取る既存 6 経路（`actionlint.yml` / `hadolint.yml` / `lychee.yml` / `pinact.yml` / `trivy.yml` / `.github/actions/setup-gitleaks/action.yml`）は `.sha256` を併せて取得して `sha256sum -c` で照合しているが、**npm レジストリ経由で取る fallow と `renovate-config-validator.yml` はこの照合を持たない**。npm レジストリ経由の取得にはリリースごとの公開チェックサムが無いためで、fallow は代わりに npm レジストリの整合性と fallow 自身のバイナリ署名検証（`fallow --version` が `verified: yes ... signed` を出す）に委ねている。任意コード実行の面は `npx --yes --ignore-scripts` で `postinstall` を実行しないことで抑えている（renovate 側は「`renovate-config-validator.yml`」節の「仕様」を参照）。
@@ -593,7 +593,7 @@ fallow が定義している終了コードは 0〜8 と 10〜13（4〜6 は run
 | Node.js            | 24 を `actions/setup-node` で入れる（renovate 44 系の engines が `^24.11.0`）                                                                                        |
 | install スクリプト | `--ignore-scripts` で実行しない。ただし RE2 で正規表現（`matchStrings` など）を検証するため、`re2` だけ `npm rebuild` で有効化する。RE2 を読み込めなければ失敗にする |
 
-- バージョンの更新は**手動**（`env:` の文字列は Renovate の更新対象外）。公開から 1 日を越えたバージョンだけを選ぶこと（`.github/renovate.json` の `minimumReleaseAge` と `.pinact.yaml` の `min_age` に揃える）。バージョンは workflow の `RENOVATE_VERSION` にだけ書く（README には数値を書かない）
+- バージョンの更新は**手動**（`env:` の文字列は Renovate の更新対象外）。公開から 3 日を越えたバージョンだけを選ぶこと（`.github/renovate.json` の `minimumReleaseAge` と `.pinact.yaml` の `min_age` に揃える）。バージョンは workflow の `RENOVATE_VERSION` にだけ書く（README には数値を書かない）
 - 検出したファイルだけを引数に渡し、`--no-global` で repo config として検証する。`--no-global` が無いと global config として検証され、repo config に対して誤検知する。引数を渡さないと `package.json` 内の `renovate` キーまで検証対象になり、上記の対象外の方針と食い違うため
 - 取得物の照合は npm レジストリの整合性（`npm install` が照合する `integrity`）に委ねており、`.sha256` の照合は無い（fallow と同じく、npm 経由の取得にはリリースごとの公開チェックサムが無いため）。任意コード実行の面は `--ignore-scripts` で抑え、install スクリプトを実行するのは `npm rebuild` で有効化する `re2` だけに限っている
 
