@@ -30,6 +30,10 @@ jobs:
     # 整備完了後に continue-on-error を外して赤検知に切り替える。
     continue-on-error: true
     env:
+      # 版は Renovate (.github/renovate.json の customManagers) が更新する。
+      # 利用側リポジトリの pre-commit のフック (hadolint/hadolint) と版がずれると、
+      # ローカルと CI で指摘が食い違う (genzouw/trim-text#253)。
+      # renovate: datasource=github-releases depName=hadolint/hadolint
       HADOLINT_VERSION: v2.12.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
