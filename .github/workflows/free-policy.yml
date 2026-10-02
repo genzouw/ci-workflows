@@ -4,7 +4,8 @@ name: free-policy
 # 機械的に判定できる違反パターンを CI で検出する。
 #
 # 検出するもの (構文的に判定可能):
-#   1. GITHUB_TOKEN 以外の `secrets.*` 参照 / `secrets: inherit` (ゼロ Secrets 原則)
+#   1. 許可リスト (GITHUB_TOKEN + inputs.allowed_secrets) に無い `secrets.*` 参照 /
+#      `secrets: inherit` (既定はゼロ Secrets 原則)
 #   2. 従量課金 API キーを示す環境変数名 (`*_API_KEY` 等・プロバイダ名付きの鍵/URL)
 #   3. 課金可能な LLM / 検索 API のエンドポイントホスト名
 #
@@ -25,6 +26,13 @@ on:
         type: boolean
         required: false
         default: true
+      allowed_secrets:
+        description: >-
+          GITHUB_TOKEN に加えて参照を許可する Secret 名・鍵変数名 (カンマ / 空白 / 改行区切り)。
+          既定は空 (GITHUB_TOKEN のみ許可)。LLM / 検索 API のプロバイダ名を含む名前は指定できない。
+        type: string
+        required: false
+        default: ""
   push:
     branches: [main, master]
   pull_request:
@@ -48,6 +56,7 @@ jobs:
           # workflow_call 以外のイベント (本リポジトリのセルフテスト) では
           # inputs が存在せず空文字になるため、既定は「enforce する」に倒す。
           ENFORCE: ${{ inputs.enforce }}
+          ALLOWED_SECRETS: ${{ inputs.allowed_secrets }}
         run: |
           set -euo pipefail
 
@@ -83,23 +92,9 @@ jobs:
           printf '走査対象: %s\n' "${targets[@]}"
           echo ""
 
-          # 正当な例外は、対象行に `free-policy: allow <理由>` を含むコメントを
-          # 書くことで除外できる (差分レビューで必ず可視化されるようにするため、
-          # 別ファイルの allowlist ではなく行内マーカー方式を採る)。
-          cat > /tmp/allowed-token.awk <<'AWK'
-          # 許可された secrets 参照 (GITHUB_TOKEN のみ) を取り除いてもなお
-          # secrets 参照が残る行だけを違反として出力する。
-          {
-            rest = $0
-            gsub(/secrets\.GITHUB_TOKEN/, "", rest)
-            gsub(/secrets\[[[:space:]]*["']GITHUB_TOKEN["'][[:space:]]*\]/, "", rest)
-            if (rest ~ /secrets\./ || rest ~ /secrets\[/) {
-              print
-            }
-          }
-          AWK
-
-          findings="$(mktemp)"
+          work="$(mktemp -d)"
+          findings="$work/findings"
+          : > "$findings"
 
           add_finding() {
             if [ -n "$2" ]; then
@@ -107,13 +102,126 @@ jobs:
             fi
           }
 
-          # --- 1. secrets ホワイトリスト (GITHUB_TOKEN 以外は禁止) --------
+          # 汎用パターン (未知のプロバイダも捕捉する) とプロバイダ名付きパターンの併用。
+          key_pattern='[A-Z][A-Z0-9]*(_[A-Z0-9]+)*_(API_KEY|API_TOKEN|SECRET_KEY)'
+          provider_pattern='(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_GENERATIVE_AI|VERTEX_AI|AZURE_OPENAI|MISTRAL|COHERE|GROQ|DEEPSEEK|PERPLEXITY|XAI|TOGETHER|OPENROUTER|HUGGINGFACE|HF|REPLICATE|TAVILY|EXA|SERPAPI|BRAVE|FIRECRAWL)_[A-Z0-9_]*(KEY|TOKEN|URL|ENDPOINT)'
+
+          # --- 例外の指定方法 ---------------------------------------------
+          # 1) 行内マーカー: 対象行に `free-policy: allow <理由>` を含むコメントを書く。
+          # 2) inputs.allowed_secrets: リポジトリ単位で許可する Secret 名・鍵変数名。
+          #    デプロイ用の資格情報 (AWS_ROLE_ARN 等) のように同じ名前を何度も参照する
+          #    リポジトリで、全行にマーカーを貼らずに済ませるためのもの。
+          # どちらもスタブ / ワークフローの差分に現れるため、例外の追加は必ずレビューで
+          # 可視化される (別ファイルの allowlist にしないのはこのため)。
+          #
+          # LLM / 検索 API のプロバイダ名を含む名前は allowed_secrets では許可しない。
+          # AGENTS.md 1.1 が名指しで MUST NOT としている鍵を、リポジトリ単位の一括許可で
+          # 通せてしまうと検査の意味がなくなるため。
+          mapfile -t allowed < <(
+            printf '%s' "${ALLOWED_SECRETS:-}" | tr ',[:space:]' '\n' | sed '/^$/d' | tr '[:lower:]' '[:upper:]' | sort -u
+          )
+          for name in "${allowed[@]}"; do
+            if ! [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+              echo "::error::allowed_secrets に Secret 名として不正な値があります: ${name}"
+              exit 1
+            fi
+            if [[ "$name" =~ $provider_pattern ]]; then
+              echo "::error::allowed_secrets に LLM / 検索 API の鍵は指定できません (AGENTS.md 1.1: MUST NOT): ${name}"
+              exit 1
+            fi
+          done
+          if [ "${#allowed[@]}" -gt 0 ]; then
+            printf '許可された Secret 名 (allowed_secrets): %s\n' "${allowed[*]}"
+            echo ""
+          fi
+          allowed_names="${allowed[*]}"
+
+          # --- 1. secrets ホワイトリスト ----------------------------------
+          # 式 (二重波括弧の内側) に現れる secrets コンテキストの参照だけを見る。
+          # 行全体を文字列検索すると、run: 内の Python 標準ライブラリ呼び出し
+          # (secrets.token_hex) やファイル名 (.secrets.baseline) を誤検知するため。
+          # GitHub Actions では secrets コンテキストは式の中でしか参照できない
+          # (if: は式の括りを省略できるが、secrets コンテキスト自体が使えない)。
+          # Renovate 設定のテンプレートも同じ二重波括弧なので同じ規則で拾える。
+          #
+          # 括りが閉じないまま行が終わった場合は次行以降も式の内側として扱う
+          # (複数行にまたがる式を取りこぼさないため。誤って開いたままになっても
+          # 検出が増える方向にしか倒れない)。
+          # 式・Secret 名はどちらも大文字小文字を区別しないため、大文字に揃えて比較する。
+          #
+          # 本ワークフロー自身も走査対象なので、awk 内では括りの文字列を連結で組み立て、
+          # 波括弧を 2 つ続けて書かない (書くと自分自身を式の開始と誤認する)。
+          cat > "$work/secrets-ref.awk" <<'AWK'
+          function is_ident(c) { return c ~ /[A-Z0-9_.-]/ }
+          # 許可リストに無い secrets 参照が s に含まれていれば 1 を返す。
+          function violates(s,    pos, prev, rest, name) {
+            s = toupper(s)
+            while ((pos = index(s, "SECRETS")) > 0) {
+              prev = (pos > 1) ? substr(s, pos - 1, 1) : ""
+              rest = substr(s, pos + 7)
+              s = rest
+              # 別の識別子・プロパティの一部 (例: steps.x.outputs.secrets) は対象外。
+              if (prev != "" && is_ident(prev)) continue
+              sub(/^[ \t]+/, "", rest)
+              if (substr(rest, 1, 1) == ".") {
+                rest = substr(rest, 2)
+                sub(/^[ \t]+/, "", rest)
+                if (match(rest, /^[A-Z_][A-Z0-9_]*/)) {
+                  name = substr(rest, 1, RLENGTH)
+                  if (!(name in ok)) return 1
+                } else {
+                  return 1 # secrets.* などの一括参照
+                }
+              } else if (substr(rest, 1, 1) == "[") {
+                if (match(rest, /^\[[ \t]*["'][A-Z_][A-Z0-9_]*["'][ \t]*\]/)) {
+                  name = substr(rest, 1, RLENGTH)
+                  gsub(/[^A-Z0-9_]/, "", name)
+                  if (!(name in ok)) return 1
+                } else {
+                  return 1 # 添字が動的で、どの Secret を読むか静的に決まらない
+                }
+              }
+            }
+            return 0
+          }
+          BEGIN {
+            open = "{" "{"
+            close_ = "}" "}"
+            ok["GITHUB_TOKEN"] = 1
+            n = split(allowed, a, " ")
+            for (i = 1; i <= n; i++) ok[a[i]] = 1
+          }
+          FNR == 1 { inexpr = 0 }
+          {
+            line = $0
+            expr = ""
+            while (line != "") {
+              if (!inexpr) {
+                p = index(line, open)
+                if (p == 0) break
+                line = substr(line, p + 2)
+                inexpr = 1
+              } else {
+                p = index(line, close_)
+                if (p == 0) {
+                  expr = expr " " line
+                  line = ""
+                } else {
+                  expr = expr " " substr(line, 1, p - 1)
+                  line = substr(line, p + 2)
+                  inexpr = 0
+                }
+              }
+            }
+            if (violates(expr)) print FILENAME ":" FNR ":" $0
+          }
+          AWK
+
           hits="$(
-            grep -HnEI -e 'secret[s][.][A-Za-z_]' -e 'secret[s]\[' -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' \
-              | awk -f /tmp/allowed-token.awk || true
+            awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]}" \
+              | grep -v 'free-policy: allow' || true
           )"
-          add_finding 'GITHUB_TOKEN 以外の secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
+          add_finding '許可されていない secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
           hits="$(
             grep -HnEI -e "^[[:space:]]*-?[[:space:]]*[\"']?secret[s][\"']?[[:space:]]*:[[:space:]]*inherit" -- "${targets[@]}" \
@@ -122,11 +230,29 @@ jobs:
           add_finding 'secrets: inherit (全 Secrets を無条件に転送するため禁止)' "$hits"
 
           # --- 2. 従量課金 API キーを示す変数名 ---------------------------
-          # 汎用パターン (未知のプロバイダも捕捉する) とプロバイダ名付きパターンの併用。
-          key_pattern='[A-Z][A-Z0-9]*(_[A-Z0-9]+)*_(API_KEY|API_TOKEN|SECRET_KEY)'
-          provider_pattern='(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_GENERATIVE_AI|VERTEX_AI|AZURE_OPENAI|MISTRAL|COHERE|GROQ|DEEPSEEK|PERPLEXITY|XAI|TOGETHER|OPENROUTER|HUGGINGFACE|HF|REPLICATE|TAVILY|EXA|SERPAPI|BRAVE|FIRECRAWL)_[A-Z0-9_]*(KEY|TOKEN|URL|ENDPOINT)'
+          # 行を識別子単位に分け、パターンに合致し、かつ allowed_secrets に無い識別子が
+          # ある行を違反とする (allowed_secrets が空なら行全体の検索と同じ結果になる)。
+          cat > "$work/key-name.awk" <<'AWK'
+          BEGIN {
+            n = split(allowed, a, " ")
+            for (i = 1; i <= n; i++) ok[a[i]] = 1
+          }
+          {
+            line = $0
+            while (match(line, /[A-Za-z0-9_]+/)) {
+              tok = substr(line, RSTART, RLENGTH)
+              line = substr(line, RSTART + RLENGTH)
+              if ((tok ~ key || tok ~ provider) && !(tok in ok)) {
+                print FILENAME ":" FNR ":" $0
+                break
+              }
+            }
+          }
+          AWK
+
           hits="$(
-            grep -HnEI -e "$key_pattern" -e "$provider_pattern" -- "${targets[@]}" \
+            awk -v allowed="$allowed_names" -v key="$key_pattern" -v provider="$provider_pattern" \
+              -f "$work/key-name.awk" -- "${targets[@]}" \
               | grep -v 'free-policy: allow' || true
           )"
           add_finding '従量課金 API キーを示す変数名 (AGENTS.md 1.1)' "$hits"
@@ -154,13 +280,14 @@ jobs:
             echo '```'
             echo ""
             echo "判断基準は対象リポジトリの AGENTS.md 1 章を参照してください。"
-            echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けることで除外できます。"
+            echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けるか、スタブの \`allowed_secrets\` に Secret 名を追加することで除外できます。"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
           echo "対応方法:"
           echo "  - 従量課金 API キー / 課金可能エンドポイントへの依存を取り除く (AGENTS.md 1 章)"
           echo "  - 正当な例外の場合は該当行に \`free-policy: allow <理由>\` のコメントを付ける"
+          echo "  - 同じ Secret を複数箇所で参照する場合はスタブの \`allowed_secrets\` に名前を追加する"
 
           if [ "${ENFORCE:-true}" = "false" ]; then
             echo "::warning::完全無料ポリシー違反の疑いを検出しました (enforce: false のため警告のみ)。"
