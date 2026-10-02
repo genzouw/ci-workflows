@@ -22,6 +22,16 @@ on:
       - ".github/workflows/auto-tag.yml"
       - ".github/workflows/auto-tag-test.yml"
       - "tests/auto-tag.sh"
+  # 週 1 回の定期実行。対象ファイルを変更しなくても、ランナーのイメージ更新で同梱の
+  # yq の挙動が変わると本体が壊れうる。auto-tag.yml が配布物の変更を
+  # 「変更なし」と誤判定すると、タグが打たれず全呼び出し元の更新が無言で止まる。
+  # job は緑のままなので、paths だけだと次に対象ファイルを触るまで気づけない。
+  schedule:
+    # 毎週月曜 07:27 JST (= 日曜 22:27 UTC)。他の定期実行 (trivy / gitleaks / lychee) の後に置く。
+    # 毎時 0 分は GitHub 側の負荷で遅延・スキップされやすいため、分をずらしている。
+    - cron: "27 22 * * 0"
+  # 定期実行と同じ条件 (main・paths フィルタなし) で手動実行できるようにする。
+  workflow_dispatch:
 
 permissions:
   contents: read
