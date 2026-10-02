@@ -105,7 +105,7 @@ put "$violations" renovate.json <<'EOF'
 EOF
 # 不正な UTF-8 バイト (Latin-1 の 1 バイト) を含む行。
 # shellcheck disable=SC2016 # 式と変数名は展開させず、文字列のままフィクスチャに書く。
-printf '# caf\351 %s $GROQ_API_KEY https://api.groq.com\n' '${{ secrets.LATIN1 }}' \
+printf '# \351 %s $GROQ_API_KEY https://api.groq.com\n' '${{ secrets.LATIN1 }}' \
   | put "$violations" .github/workflows/latin1.yml
 # 走査対象外 (ポリシー解説や CI 定義でない YAML)。検出されてはならない。
 put "$violations" README.md <<'EOF'
