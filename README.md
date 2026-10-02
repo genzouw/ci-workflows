@@ -374,7 +374,7 @@ jobs:
 
 1 が見るのは**式（`${{ ... }}`）の内側に現れる `secrets` コンテキストの参照だけ**である。`run:` 内の Python 標準ライブラリ呼び出し（`secrets.token_hex(8)`）やファイル名（`.secrets.baseline`）のように、式の外にある文字列は対象にしない。複数行にまたがる式、`secrets['NAME']` の添字参照、大文字小文字の違い（`SECRETS.name`）も同じ参照として扱う。添字が動的な参照（`secrets[format(...)]`）は、どの Secret を読むか静的に決まらないため常に違反とする。
 
-走査対象は `.github/` 配下の YAML と composite action 定義（`action.yml` / `action.yaml`）のみ。ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの組み込み」であり、`AGENTS.md` や README がポリシー解説として鍵名を列挙しているのを誤検知しないための限定である。
+走査対象は、`.github/` 配下の YAML / JSON / JSON5、リポジトリルート直下の Renovate 設定（`renovate.json` / `renovate.json5` / `.renovaterc` / `.renovaterc.json` / `.renovaterc.json5`）、composite action 定義（`action.yml` / `action.yaml`）のみ。ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの組み込み」であり、`AGENTS.md` や README がポリシー解説として鍵名を列挙しているのを誤検知しないための限定である。
 
 ### 検出しないもの（レビュー運用でカバー）
 
