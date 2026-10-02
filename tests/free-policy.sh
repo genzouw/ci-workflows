@@ -122,6 +122,8 @@ EOF
 #   5〜7 行目: マーカーがあっても除外されない (プロバイダ名付きの鍵名・課金 API の
 #             ホスト名・小文字で書いたプロバイダ名付きの Secret 名)
 #   12 行目: 除外される (プロバイダ名を名前の途中に含むだけの鍵名。ALEXA の EXA)
+#   13〜15 行目: マーカーがあっても除外されない (動的な添字・secrets コンテキスト全体の
+#               参照・静的な参照と動的な添字が同じ式にある行)
 # 行番号は下の期待値と対応しているので、行を足すときは末尾に足す。
 put "$violations" .github/workflows/marked.yml <<'EOF'
 jobs:
@@ -136,6 +138,9 @@ jobs:
   extra:
     env:
       ALEXA: ${{ secrets.ALEXA_REFRESH_TOKEN }} # free-policy: allow テスト用の例外
+      DYNAMIC: ${{ secrets[format('{0}_{1}', 'GEMINI', 'API_KEY')] }} # free-policy: allow テスト用の例外
+      WHOLE: ${{ toJSON(secrets) }} # free-policy: allow テスト用の例外
+      MIXED: ${{ secrets.UNLISTED || secrets[matrix.name] }} # free-policy: allow テスト用の例外
 EOF
 init_repo "$violations"
 
@@ -279,6 +284,9 @@ ref .github/workflows/ci.yml:16
 ref .github/workflows/latin1.yml:1
 ref k=v/action.yml:5
 ref .github/workflows/marked.yml:7
+ref .github/workflows/marked.yml:13
+ref .github/workflows/marked.yml:14
+ref .github/workflows/marked.yml:15
 ref renovate.json:3
 inherit .github/workflows/ci.yml:28
 key .github/workflows/ci.yml:23
@@ -294,6 +302,7 @@ host .github/workflows/marked.yml:6
   expect_hits "allowed_secrets なし: 許可リスト外の参照・鍵名・エンドポイントを検出する" 1 "$base_hits"
   expect_no_chapter "違反時の案内に AGENTS.md の章番号を固定で出さない"
   expect_output "違反時の案内に、マーカーで除外できない行があることを書く" 1 'でも除外できない'
+  expect_output "違反時の案内に、動的な secrets 参照はマーカーで除外できないことを書く" 1 'マーカーでは除外できない'
 
   # --- allowed_secrets あり (カンマ・空白・改行区切り、小文字も可) ---
   run_scan "$violations" ALLOWED_SECRETS=$'aws_role_arn, DEPLOY_HOST\nREVIEWDOG_GITHUB_API_TOKEN'
@@ -303,6 +312,9 @@ ref .github/workflows/ci.yml:12
 ref .github/workflows/ci.yml:13
 ref .github/workflows/latin1.yml:1
 ref .github/workflows/marked.yml:7
+ref .github/workflows/marked.yml:13
+ref .github/workflows/marked.yml:14
+ref .github/workflows/marked.yml:15
 ref renovate.json:3
 inherit .github/workflows/ci.yml:28
 key .github/workflows/ci.yml:23

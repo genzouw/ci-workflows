@@ -125,7 +125,8 @@ jobs:
           # --- 例外の指定方法 ---------------------------------------------
           # 1) 行内マーカー: 対象行に `free-policy: allow <理由>` を含むコメントを書く。
           #    プロバイダ名付きの鍵名 (provider_pattern) か課金 API のホスト名 (host_pattern)
-          #    を含む行は、マーカーがあっても除外しない (下の drop_marked を参照)。
+          #    を含む行と、どの Secret を読むか静的に決まらない secrets 参照 (動的な添字・
+          #    コンテキスト全体の参照) は、マーカーがあっても除外しない (下の drop_marked を参照)。
           # 2) inputs.allowed_secrets: リポジトリ単位で許可する Secret 名・鍵変数名。
           #    デプロイ用の資格情報 (AWS_ROLE_ARN 等) のように同じ名前を何度も参照する
           #    リポジトリで、全行にマーカーを貼らずに済ませるためのもの。
@@ -165,7 +166,8 @@ jobs:
           allowed_names="${allowed[*]}"
 
           # 行内マーカーの付いた行を検出結果 (標準入力) から外す。
-          # ただし、プロバイダ名付きの鍵名か課金 API のホスト名を含む行は外さない。
+          # ただし、プロバイダ名付きの鍵名か課金 API のホスト名を含む行と、どの Secret を
+          # 読むか静的に決まらない secrets 参照の行は外さない。
           # マーカーに制限が無いと、名指しで MUST NOT としている LLM プロバイダの鍵の参照も
           # マーカー 1 つで通ってしまう。失敗時のログがマーカーを案内するため、CI を通したい
           # エージェントがそのまま足す経路になる。allowed_secrets が同じ名前を拒否している
@@ -180,13 +182,24 @@ jobs:
           # `_` を境界に含めているのは、プロバイダ名の前に接頭辞を足すだけで
           # 擦り抜けられないようにするため。
           #
+          # 引数に tagged を渡すと、各行を「種別<TAB>検出行」として読む (検出 1 の出力)。
+          # 種別が dynamic の行は、マーカーがあっても除外しない。動的な添字と secrets
+          # コンテキスト全体の参照は、どの Secret を読むか静的に決まらないため、行に
+          # プロバイダ名が現れなくてもプロバイダの鍵を読める。
+          #
           # Secret 名とホスト名は大文字小文字を区別しないため、行を大文字 / 小文字に
           # 揃えてから照合する (小文字で書いた Secret 名で擦り抜けられないようにする)。
           # パターンは -v ではなく環境変数で渡す。-v はバックスラッシュをエスケープとして
           # 解釈するため、host_pattern の `\.` が崩れる。
           # awk が異常終了した場合は、呼び出し側の代入で set -e が効いて job が失敗する。
           drop_marked() {
-            PROVIDER="(^|[^A-Z0-9])$provider_pattern" HOST="$host_pattern" awk '
+            PROVIDER="(^|[^A-Z0-9])$provider_pattern" HOST="$host_pattern" TAGGED="${1:-}" awk '
+              ENVIRON["TAGGED"] != "" {
+                tab = index($0, "\t")
+                kind = substr($0, 1, tab - 1)
+                $0 = substr($0, tab + 1)
+                if (kind == "dynamic") { print; next }
+              }
               index($0, "free-policy: allow") && toupper($0) !~ ENVIRON["PROVIDER"] && tolower($0) !~ ENVIRON["HOST"] { next }
               { print }
             '
@@ -213,8 +226,13 @@ jobs:
           # 波括弧を 2 つ続けて書かない (書くと自分自身を式の開始と誤認する)。
           cat > "$work/secrets-ref.awk" <<'AWK'
           function is_ident(c) { return c ~ /[A-Z0-9_.-]/ }
-          # 許可リストに無い secrets 参照が s に含まれていれば 1 を返す。
-          function violates(s,    pos, prev, rest, name) {
+          # 許可リストに無い secrets 参照が s に含まれていれば 1 か 2 を返す (無ければ 0)。
+          #   1: 名前を静的に読める参照 (.NAME と、文字列リテラルの添字) だけが違反
+          #   2: どの Secret を読むか静的に決まらない参照 (動的な添字・一括参照・
+          #      コンテキスト全体の参照) を含む。行内マーカーでも除外しない
+          # 1 つの式に両方がある場合に 2 を返せるよう、1 では打ち切らず最後まで調べる。
+          function violates(s,    pos, prev, rest, name, found) {
+            found = 0
             s = toupper(s)
             while ((pos = index(s, "SECRETS")) > 0) {
               prev = (pos > 1) ? substr(s, pos - 1, 1) : ""
@@ -228,26 +246,26 @@ jobs:
                 sub(/^[ \t]+/, "", rest)
                 if (match(rest, /^[A-Z_][A-Z0-9_]*/)) {
                   name = substr(rest, 1, RLENGTH)
-                  if (!(name in ok)) return 1
+                  if (!(name in ok)) found = 1
                 } else {
-                  return 1 # secrets.* などの一括参照
+                  return 2 # secrets.* などの一括参照
                 }
               } else if (substr(rest, 1, 1) == "[") {
                 if (match(rest, /^\[[ \t]*["'][A-Z_][A-Z0-9_]*["'][ \t]*\]/)) {
                   name = substr(rest, 1, RLENGTH)
                   gsub(/[^A-Z0-9_]/, "", name)
-                  if (!(name in ok)) return 1
+                  if (!(name in ok)) found = 1
                 } else {
-                  return 1 # 添字が動的で、どの Secret を読むか静的に決まらない
+                  return 2 # 添字が動的で、どの Secret を読むか静的に決まらない
                 }
               } else if (rest == "" || substr(rest, 1, 1) !~ /[A-Z0-9_-]/) {
                 # secrets コンテキスト全体の参照 (toJSON に丸ごと渡すなど)。全 Secret を
                 # 1 つの値として渡すため、どの Secret を読むか静的に決まらない。
                 # 行末で切れた参照 (次行が .NAME で続く書き方) もここで違反になる。
-                return 1
+                return 2
               }
             }
-            return 0
+            return found
           }
           # 文字列リテラルの外にある最初の閉じ括りの位置を返す (無ければ 0)。
           # 式の文字列リテラルはシングルクォートで、内側のクォートは 2 つ重ねて書くため、
@@ -291,7 +309,9 @@ jobs:
                 }
               }
             }
-            if (violates(expr)) print fname ":" FNR ":" $0
+            # 種別を行頭に付けて出力する (drop_marked が種別を見て、マーカーで除外できるかを決める)。
+            v = violates(expr)
+            if (v) print (v == 2 ? "dynamic" : "static") "\t" fname ":" FNR ":" $0
           }
           AWK
 
@@ -305,7 +325,7 @@ jobs:
           # (例: k=v/action.yml) が読まれないまま検出から外れる。./ で始まる引数は
           # 代入として解釈されない。前置した ./ は awk 側で出力時に外す。
           raw="$(awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]/#/./}")"
-          hits="$(printf '%s\n' "$raw" | drop_marked | sed '/^$/d')"
+          hits="$(printf '%s\n' "$raw" | drop_marked tagged | sed '/^$/d')"
           add_finding '許可されていない secrets 参照 (完全無料ポリシー: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
           # grep も awk と同じく、結果を先に変数へ受けてからマーカーを除外する。
@@ -370,6 +390,7 @@ jobs:
             echo "判断基準は、対象リポジトリの AGENTS.md で完全無料ポリシー (CI/CD で利用できるサービスの条件) を定めた章を参照してください。"
             echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けるか、スタブの \`allowed_secrets\` に Secret 名を追加することで除外できます。"
             echo "ただし、LLM / 検索 API のプロバイダ名付きの鍵名と、課金可能な API のエンドポイントを含む行は、どちらの方法でも除外できません。該当の処理を CI から取り除いてください。"
+            echo "動的な添字での secrets 参照と、secrets コンテキスト全体の参照 (どの Secret を読むか静的に決まらない形) も、マーカーでは除外できません。Secret 名を静的に書いてください。"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
@@ -378,6 +399,7 @@ jobs:
           echo "  - 正当な例外の場合は該当行に \`free-policy: allow <理由>\` のコメントを付ける"
           echo "  - 同じ Secret を複数箇所で参照する場合はスタブの \`allowed_secrets\` に名前を追加する"
           echo "  - LLM / 検索 API のプロバイダ名付きの鍵名・課金可能な API のエンドポイントを含む行は、マーカーでも \`allowed_secrets\` でも除外できない。該当の処理を CI から取り除く"
+          echo "  - 動的な添字での secrets 参照と、secrets コンテキスト全体の参照は、マーカーでは除外できない。Secret 名を静的に書く"
 
           if [ "${ENFORCE:-true}" = "false" ]; then
             echo "::warning::完全無料ポリシー違反の疑いを検出しました (enforce: false のため警告のみ)。"
