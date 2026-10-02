@@ -112,9 +112,11 @@ jobs:
           # 標準入力のワークフローが workflow_call を持てば true、持たなければ false を出す。
           # コメントに workflow_call と書いてあるだけのファイルを誤判定しないよう、
           # 文字列検索ではなく on: のキーを見る (on: は map / 配列 / 文字列のどれでも書ける)。
+          # explode(.): on: を YAML のエイリアス (on: *a) で書いた場合に備えて先に展開する。
+          # 展開しないと tag がどの型にも当たらず、reusable を警告なしで false と判定する。
           is_reusable() {
             # shellcheck disable=SC2016 # $o / $t は yq の変数で、シェルには展開させない。
-            yq '.on as $o | ($o | tag) as $t | (($t == "!!map" and ($o | has("workflow_call"))) or ($t == "!!seq" and ($o | contains(["workflow_call"]))) or ($t == "!!str" and $o == "workflow_call"))'
+            yq 'explode(.) | .on as $o | ($o | tag) as $t | (($t == "!!map" and ($o | has("workflow_call"))) or ($t == "!!seq" and ($o | contains(["workflow_call"]))) or ($t == "!!str" and $o == "workflow_call"))'
           }
           # reusable_at <tree-ish> <path>: true / false / absent (その時点に無い) / unknown
           # (YAML として読めない) のいずれかを出す。

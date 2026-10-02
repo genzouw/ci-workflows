@@ -283,6 +283,16 @@ commit "fix: on を配列で書いた reusable workflow を追加"
 expect_tag "on が配列でも workflow_call を見つける" v1.0.1
 
 new_repo
+put .github/workflows/alias.yml <<'EOF'
+x-triggers: &triggers
+  workflow_call: {}
+on: *triggers
+jobs: {}
+EOF
+commit "fix: on をエイリアスで書いた reusable workflow を追加"
+expect_tag "on がエイリアスでも workflow_call を見つける" v1.0.1
+
+new_repo
 put .github/workflows/broken.yml <<'EOF'
 on: [push
 jobs: {}
