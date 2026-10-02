@@ -264,10 +264,14 @@ jobs:
           hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '許可されていない secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
-          hits="$(
-            grep -HnEI -e "^[[:space:]]*-?[[:space:]]*[\"']?secret[s][\"']?[[:space:]]*:[[:space:]]*inherit" -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' || true
-          )"
+          # grep も awk と同じく、結果を先に変数へ受けてからマーカーを除外する。
+          # grep は 1 件も合致しないと 1 を返すので、1 だけを「違反なし」として許す。
+          # 2 以上 (走査対象を読めないなど) は job を失敗させる。
+          scan_lines() {
+            grep -HnEI -e "$1" -- "${targets[@]}" || [ "$?" -eq 1 ]
+          }
+          raw="$(scan_lines "^[[:space:]]*-?[[:space:]]*[\"']?secret[s][\"']?[[:space:]]*:[[:space:]]*inherit")"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding 'secrets: inherit (全 Secrets を無条件に転送するため禁止)' "$hits"
 
           # --- 2. 従量課金 API キーを示す変数名 ---------------------------
@@ -302,10 +306,8 @@ jobs:
 
           # --- 3. 課金可能な API エンドポイント ---------------------------
           host_pattern='(api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|api\.deepseek\.com|api\.mistral\.ai|api\.cohere\.(ai|com)|api\.groq\.com|api\.perplexity\.ai|api\.x\.ai|api\.together\.(xyz|ai)|openrouter\.ai|api\.tavily\.com|api\.exa\.ai|serpapi\.com|api\.search\.brave\.com|api\.firecrawl\.dev|api\.replicate\.com|(api-inference|router)\.huggingface\.co)'
-          hits="$(
-            grep -HnEI -e "$host_pattern" -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' || true
-          )"
+          raw="$(scan_lines "$host_pattern")"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '課金可能な API エンドポイントへの接続先 (AGENTS.md 1.1: OpenAI 互換エンドポイント経由も MUST NOT)' "$hits"
 
           # --- 判定 -------------------------------------------------------
