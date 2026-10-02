@@ -1,0 +1,48 @@
+name: auto-tag-test
+
+# auto-tag.yml のタグ付け判定をフィクスチャで検証する (本リポジトリ専用)。
+#
+# auto-tag.yml は main への push でしか実行されず、判定を変えても PR 上では動作を
+# 確かめられない。誤るとタグの打ち忘れ (全呼び出し元の更新が止まる) や、配布物の
+# 変わらないタグ (全呼び出し元に中身の無い更新 PR が出る) になるため、
+# tests/auto-tag.sh で判定を検証する。
+#
+# workflow_call は持たない。テストスクリプトは本リポジトリにしか無いため。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/auto-tag.yml"
+      - ".github/workflows/auto-tag-test.yml"
+      - "tests/auto-tag.sh"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/auto-tag.yml"
+      - ".github/workflows/auto-tag-test.yml"
+      - "tests/auto-tag.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  auto-tag-test:
+    name: auto-tag-test (tagging decision fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run auto-tag fixture tests
+        run: |
+          set -euo pipefail
+          # yq はランナー同梱のものを使う (run: の取り出しと、auto-tag.yml 自身の判定に使用)。
+          yq --version
+          bash tests/auto-tag.sh
