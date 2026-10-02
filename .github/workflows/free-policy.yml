@@ -16,6 +16,10 @@ name: free-policy
 #
 # SHA ピン留めの強制は actionlint.yml と zizmor で既にカバーしているため、
 # 重複を避けて本ワークフローでは扱わない。
+#
+# 違反時のメッセージには AGENTS.md の章番号を書かない。章番号は呼び出し元の
+# リポジトリごとに異なり (本リポジトリでは 1 章だが、4 章に置くリポジトリもある)、
+# 固定の番号で案内すると、検査で落ちた人が別の内容の章に行き着くため。
 
 on:
   # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
@@ -268,7 +272,7 @@ jobs:
           # 代入として解釈されない。前置した ./ は awk 側で出力時に外す。
           raw="$(awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]/#/./}")"
           hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
-          add_finding '許可されていない secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
+          add_finding '許可されていない secrets 参照 (完全無料ポリシー: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
           # grep も awk と同じく、結果を先に変数へ受けてからマーカーを除外する。
           # grep は 1 件も合致しないと 1 を返すので、1 だけを「違反なし」として許す。
@@ -308,13 +312,13 @@ jobs:
               -f "$work/key-name.awk" -- "${targets[@]/#/./}"
           )"
           hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
-          add_finding '従量課金 API キーを示す変数名 (AGENTS.md 1.1)' "$hits"
+          add_finding '従量課金 API キーを示す変数名 (完全無料ポリシー: 従量課金 API キーの利用は MUST NOT)' "$hits"
 
           # --- 3. 課金可能な API エンドポイント ---------------------------
           host_pattern='(api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|api\.deepseek\.com|api\.mistral\.ai|api\.cohere\.(ai|com)|api\.groq\.com|api\.perplexity\.ai|api\.x\.ai|api\.together\.(xyz|ai)|openrouter\.ai|api\.tavily\.com|api\.exa\.ai|serpapi\.com|api\.search\.brave\.com|api\.firecrawl\.dev|api\.replicate\.com|(api-inference|router)\.huggingface\.co)'
           raw="$(scan_lines "$host_pattern")"
           hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
-          add_finding '課金可能な API エンドポイントへの接続先 (AGENTS.md 1.1: OpenAI 互換エンドポイント経由も MUST NOT)' "$hits"
+          add_finding '課金可能な API エンドポイントへの接続先 (完全無料ポリシー: OpenAI 互換エンドポイント経由も MUST NOT)' "$hits"
 
           # --- 判定 -------------------------------------------------------
           if [ ! -s "$findings" ]; then
@@ -330,13 +334,13 @@ jobs:
             cat "$findings"
             echo '```'
             echo ""
-            echo "判断基準は対象リポジトリの AGENTS.md 1 章を参照してください。"
+            echo "判断基準は、対象リポジトリの AGENTS.md で完全無料ポリシー (CI/CD で利用できるサービスの条件) を定めた章を参照してください。"
             echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けるか、スタブの \`allowed_secrets\` に Secret 名を追加することで除外できます。"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
           echo "対応方法:"
-          echo "  - 従量課金 API キー / 課金可能エンドポイントへの依存を取り除く (AGENTS.md 1 章)"
+          echo "  - 従量課金 API キー / 課金可能エンドポイントへの依存を取り除く (AGENTS.md の完全無料ポリシーの章)"
           echo "  - 正当な例外の場合は該当行に \`free-policy: allow <理由>\` のコメントを付ける"
           echo "  - 同じ Secret を複数箇所で参照する場合はスタブの \`allowed_secrets\` に名前を追加する"
 
