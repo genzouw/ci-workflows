@@ -225,7 +225,7 @@ jobs:
             n = split(allowed, a, " ")
             for (i = 1; i <= n; i++) ok[a[i]] = 1
           }
-          FNR == 1 { inexpr = 0 }
+          FNR == 1 { inexpr = 0; fname = FILENAME; sub(/^\.\//, "", fname) }
           {
             line = $0
             expr = ""
@@ -247,7 +247,7 @@ jobs:
                 }
               }
             }
-            if (violates(expr)) print FILENAME ":" FNR ":" $0
+            if (violates(expr)) print fname ":" FNR ":" $0
           }
           AWK
 
@@ -255,7 +255,12 @@ jobs:
           # 異常終了 (構文エラー・実装差) まで吸収して「違反なし」で成功してしまうため。
           # 単独の代入なら set -e が効き、awk が非ゼロを返した時点で job が失敗する。
           # `|| true` が吸収するのは「マーカー除外後に 1 行も残らない」場合だけにする。
-          raw="$(awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]}")"
+          #
+          # awk に渡すパスには ./ を前置する。awk は「名前=値」の形をした引数を、-- の
+          # 後ろでもファイルではなく変数代入として扱うため、パスに = を含む走査対象
+          # (例: k=v/action.yml) が読まれないまま検出から外れる。./ で始まる引数は
+          # 代入として解釈されない。前置した ./ は awk 側で出力時に外す。
+          raw="$(awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]/#/./}")"
           hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '許可されていない secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
@@ -273,22 +278,24 @@ jobs:
             n = split(allowed, a, " ")
             for (i = 1; i <= n; i++) ok[a[i]] = 1
           }
+          FNR == 1 { fname = FILENAME; sub(/^\.\//, "", fname) }
           {
             line = $0
             while (match(line, /[A-Za-z0-9_]+/)) {
               tok = substr(line, RSTART, RLENGTH)
               line = substr(line, RSTART + RLENGTH)
               if ((tok ~ key || tok ~ provider) && !(tok in ok)) {
-                print FILENAME ":" FNR ":" $0
+                print fname ":" FNR ":" $0
                 break
               }
             }
           }
           AWK
 
+          # パスに ./ を前置する理由は検出 1 と同じ。
           raw="$(
             awk -v allowed="$allowed_names" -v key="$key_pattern" -v provider="$provider_pattern" \
-              -f "$work/key-name.awk" -- "${targets[@]}"
+              -f "$work/key-name.awk" -- "${targets[@]/#/./}"
           )"
           hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '従量課金 API キーを示す変数名 (AGENTS.md 1.1)' "$hits"
