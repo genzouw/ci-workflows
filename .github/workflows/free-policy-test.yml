@@ -23,6 +23,16 @@ on:
       - ".github/workflows/free-policy.yml"
       - ".github/workflows/free-policy-test.yml"
       - "tests/free-policy.sh"
+  # 週 1 回の定期実行。対象ファイルを変更しなくても、ランナーのイメージ更新で同梱の
+  # yq / awk の挙動が変わると本体が壊れうる。free-policy.yml が違反を
+  # 見逃したまま「違反なし」で成功すると、全呼び出し元の検査が無言で効かなくなる。
+  # job は緑のままなので、paths だけだと次に対象ファイルを触るまで気づけない。
+  schedule:
+    # 毎週月曜 07:17 JST (= 日曜 22:17 UTC)。他の定期実行 (trivy / gitleaks / lychee) の後に置く。
+    # 毎時 0 分は GitHub 側の負荷で遅延・スキップされやすいため、分をずらしている。
+    - cron: "17 22 * * 0"
+  # 定期実行と同じ条件 (main・paths フィルタなし) で手動実行できるようにする。
+  workflow_dispatch:
 
 permissions:
   contents: read
