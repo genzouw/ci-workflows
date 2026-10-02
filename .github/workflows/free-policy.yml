@@ -26,7 +26,9 @@ on:
   workflow_call:
     inputs:
       enforce:
-        description: "違反検出時にジョブを失敗させるか。false なら警告のみ (段階導入・誤検知観察用)。"
+        description: >-
+          違反検出時にジョブを失敗させるか。false なら警告のみ (段階導入・誤検知観察用)。
+          行内マーカーでも allowed_secrets でも除外できない違反は、false でも失敗する。
         type: boolean
         required: false
         default: true
@@ -110,6 +112,10 @@ jobs:
           work="$(mktemp -d)"
           findings="$work/findings"
           : > "$findings"
+          # 行内マーカーでは除外できない違反 (drop_marked が記録する)。
+          # 1 行でもあれば、enforce: false でも job を失敗させる (末尾の判定を参照)。
+          fixed="$work/fixed"
+          : > "$fixed"
 
           add_finding() {
             if [ -n "$2" ]; then
@@ -198,16 +204,28 @@ jobs:
           # パターンは -v ではなく環境変数で渡す。-v はバックスラッシュをエスケープとして
           # 解釈するため、host_pattern の `\.` が崩れる。
           # awk が異常終了した場合は、呼び出し側の代入で set -e が効いて job が失敗する。
+          #
+          # マーカーでは除外できないと判定した行は、マーカーの有無に関係なく $fixed にも
+          # 書き出す。末尾の判定が enforce: false でも job を失敗させるかを決めるのに使う。
+          # 除外できるかどうかの条件をここ 1 か所に置き、判定側で同じ照合を書き直さない
+          # (2 か所に書くと、片方だけ直したときに「マーカーでは通らないが enforce: false
+          # なら通る」行が生まれる)。
           drop_marked() {
-            PROVIDER="(^|[^A-Z0-9])$provider_pattern" HOST="$host_pattern" TAGGED="${1:-}" awk '
+            PROVIDER="(^|[^A-Z0-9])$provider_pattern" HOST="$host_pattern" TAGGED="${1:-}" FIXED="$fixed" awk '
+              BEGIN { fixed = ENVIRON["FIXED"] }
+              { kind = "" }
               ENVIRON["TAGGED"] != "" {
                 tab = index($0, "\t")
                 kind = substr($0, 1, tab - 1)
                 $0 = substr($0, tab + 1)
-                if (kind == "dynamic") { print; next }
               }
               { body = $0; sub(/^[^:]*:[0-9]+:/, "", body) }
-              index(body, "free-policy: allow") && toupper(body) !~ ENVIRON["PROVIDER"] && tolower(body) !~ ENVIRON["HOST"] { next }
+              kind == "dynamic" || toupper(body) ~ ENVIRON["PROVIDER"] || tolower(body) ~ ENVIRON["HOST"] {
+                print
+                print >> fixed
+                next
+              }
+              index(body, "free-policy: allow") { next }
               { print }
             '
           }
@@ -408,7 +426,24 @@ jobs:
           echo "  - LLM / 検索 API のプロバイダ名付きの鍵名・課金可能な API のエンドポイントを含む行は、マーカーでも \`allowed_secrets\` でも除外できない。該当の処理を CI から取り除く"
           echo "  - 動的な添字での secrets 参照と、secrets コンテキスト全体の参照は、マーカーでは除外できない。Secret 名を静的に書く"
 
+          # enforce: false は、誤検知を観察するあいだ job を成功させるための入力。
+          # マーカーでも allowed_secrets でも除外できない違反は、観察しても「該当の処理を
+          # CI から取り除く」以外の結論にならないため、enforce: false でも失敗させる
+          # (allowed_secrets の設定エラーが enforce: false でも失敗するのと同じ扱い)。
+          # ここを通すと、マーカーで通せなくした行を、スタブに enforce: false を 1 行
+          # 足すだけで通せてしまう。
           if [ "${ENFORCE:-true}" = "false" ]; then
+            if [ -s "$fixed" ]; then
+              echo ""
+              echo "enforce: false でも job を失敗させる行 (マーカーでも allowed_secrets でも除外できない違反):"
+              sort -u "$fixed" | sed 's/^/  /'
+              echo "::error::完全無料ポリシー違反を検出しました。マーカーでも allowed_secrets でも除外できない違反は、enforce: false でも job を失敗させます。"
+              exit 1
+            fi
+            {
+              echo ""
+              echo "> enforce: false (誤検知の観察中) のため、この job は警告のみで成功しています。上の検出は未対応のままです。"
+            } >> "$GITHUB_STEP_SUMMARY"
             echo "::warning::完全無料ポリシー違反の疑いを検出しました (enforce: false のため警告のみ)。"
             exit 0
           fi
