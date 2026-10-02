@@ -114,9 +114,14 @@ jobs:
           # どちらもスタブ / ワークフローの差分に現れるため、例外の追加は必ずレビューで
           # 可視化される (別ファイルの allowlist にしないのはこのため)。
           #
-          # LLM / 検索 API のプロバイダ名を含む名前は allowed_secrets では許可しない。
-          # AGENTS.md 1.1 が名指しで MUST NOT としている鍵を、リポジトリ単位の一括許可で
-          # 通せてしまうと検査の意味がなくなるため。
+          # 検出 2 の鍵名パターン (provider_pattern / key_pattern) に合致する名前は
+          # allowed_secrets では許可しない。AGENTS.md 1.1 が名指しで MUST NOT としている
+          # 鍵 (GOOGLE_API_KEY など) や未知のプロバイダ鍵を、リポジトリ単位の一括許可で
+          # 通せてしまうと検査の意味がなくなるため (許可した名前は検出 2 から丸ごと外れる)。
+          # 拒否の判定を検出 2 と同じパターンにしておけば、両者の食い違いで穴が開かない。
+          # 例外は GitHub 自身の資格情報 (REVIEWDOG_GITHUB_API_TOKEN など、名前に GITHUB を
+          # 単語として含み、provider_pattern に合致しないもの) で、課金を伴わないため許可する。
+          github_pattern='(^|_)GITHUB(_|$)'
           mapfile -t allowed < <(
             printf '%s' "${ALLOWED_SECRETS:-}" | tr ',[:space:]' '\n' | sed '/^$/d' | tr '[:lower:]' '[:upper:]' | sort -u
           )
@@ -125,7 +130,8 @@ jobs:
               echo "::error::allowed_secrets に Secret 名として不正な値があります: ${name}"
               exit 1
             fi
-            if [[ "$name" =~ $provider_pattern ]]; then
+            if [[ "$name" =~ $provider_pattern ]] \
+              || { [[ "$name" =~ $key_pattern ]] && ! [[ "$name" =~ $github_pattern ]]; }; then
               echo "::error::allowed_secrets に LLM / 検索 API の鍵は指定できません (AGENTS.md 1.1: MUST NOT): ${name}"
               exit 1
             fi
