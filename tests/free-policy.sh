@@ -153,6 +153,23 @@ jobs:
 EOF
 init_repo "$violations"
 
+# マーカーや allowed_secrets で除外できる種類の違反だけを含むリポジトリ
+# (許可リスト外の静的な secrets 参照・プロバイダ名を含まない鍵名・secrets: inherit)。
+# enforce: false で job が成功するのは、検出がこの種類だけの場合に限る。
+# 行番号は下の期待値と対応しているので、行を足すときは末尾に足す。
+excludable="$tmp/excludable"
+put "$excludable" .github/workflows/ci.yml <<'EOF'
+jobs:
+  build:
+    env:
+      ROLE: ${{ secrets.AWS_ROLE_ARN }}
+    steps:
+      - run: echo "$VENDOR_API_TOKEN"
+  deploy:
+    secrets: inherit
+EOF
+init_repo "$excludable"
+
 # 違反の無いリポジトリ。
 clean="$tmp/clean"
 put "$clean" .github/workflows/ci.yml <<'EOF'
@@ -255,6 +272,15 @@ expect_output() {
   fi
 }
 
+# expect_summary <説明> <ジョブサマリに含まれるべき文字列>
+expect_summary() {
+  if grep -qF -- "$2" "$tmp/summary"; then
+    report ok "$1"
+  else
+    report ng "$1" "ジョブサマリに含まれるべき文字列: $2" "--- ジョブサマリ" "$(cat "$tmp/summary")"
+  fi
+}
+
 # expect_no_chapter <説明>: ログとジョブサマリが AGENTS.md の章番号を案内していないこと。
 # 章番号は呼び出し元のリポジトリごとに異なるため、固定の番号を出すと誤った章へ誘導する。
 # 「AGENTS.md 1.1」のように数字が直後に続く形と、「AGENTS.md の 1 章」のように
@@ -336,9 +362,31 @@ host .github/workflows/marked.yml:6
 '
 
   # --- enforce: false ---
+  # マーカーでも allowed_secrets でも除外できない違反が 1 行でもあれば、enforce: false でも
+  # 失敗する。除外できる違反だけなら、検出内容はそのままで job は成功する。
   run_scan "$violations" ENFORCE=false
-  expect_hits "enforce: false: 検出内容は変わらず、job は成功する" 0 "$base_hits"
+  expect_hits "enforce: false: 除外できない違反があれば、検出内容は変わらず job は失敗する" 1 "$base_hits"
+  expect_output "enforce: false: 除外できない違反で失敗した理由を出す" 1 'enforce: false でも job を失敗させます'
+  # 失敗の原因になった行だけを挙げる (マーカーの無い行も含み、除外できる行は含まない)。
+  expect_output "enforce: false: 失敗の原因になった行を挙げる (マーカーなし)" 1 '  .github/workflows/ci.yml:25:'
+  expect_output "enforce: false: 失敗の原因になった行を挙げる (動的な添字)" 1 '  .github/workflows/marked.yml:13:'
+  if [[ "$out" != *'  .github/workflows/ci.yml:8:'* ]]; then
+    report ok "enforce: false: 除外できる行は失敗の原因に挙げない"
+  else
+    report ng "enforce: false: 除外できる行は失敗の原因に挙げない" "出力に含まれてはならない文字列:   .github/workflows/ci.yml:8:"
+  fi
+
+  local excludable_hits='
+ref .github/workflows/ci.yml:4
+key .github/workflows/ci.yml:6
+inherit .github/workflows/ci.yml:8
+'
+  run_scan "$excludable"
+  expect_hits "除外できる違反だけ: enforce の既定 (true) では失敗する" 1 "$excludable_hits"
+  run_scan "$excludable" ENFORCE=false
+  expect_hits "enforce: false: 除外できる違反だけなら、検出内容は変わらず job は成功する" 0 "$excludable_hits"
   expect_output "enforce: false: 警告を出す" 0 '::warning::'
+  expect_summary "enforce: false: ジョブサマリに警告のみで成功したことを書く" 'enforce: false (誤検知の観察中)'
 
   # --- 違反なし・走査対象なし ---
   run_scan "$clean"
