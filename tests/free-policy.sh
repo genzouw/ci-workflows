@@ -115,6 +115,18 @@ put "$violations" docs/ci.yml <<'EOF'
 env:
   KEY: ${{ secrets.OPENAI_API_KEY }}
 EOF
+# 行内マーカー付きの行。どの検出にも出てはならない。
+# ci.yml の MARKED は検出 1 の除外しか通らないため、secrets: inherit・検出 2・検出 3 の
+# 除外をここで通す。別ファイルにしているのは、ci.yml の行番号と期待値を動かさないため。
+put "$violations" .github/workflows/marked.yml <<'EOF'
+jobs:
+  build:
+    steps:
+      - run: echo "$COHERE_API_KEY" # free-policy: allow テスト用の例外
+      - run: curl https://api.mistral.ai/v1/models # free-policy: allow テスト用の例外
+  deploy:
+    secrets: inherit # free-policy: allow テスト用の例外
+EOF
 init_repo "$violations"
 
 # 違反の無いリポジトリ。
