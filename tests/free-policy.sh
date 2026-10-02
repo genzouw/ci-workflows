@@ -166,6 +166,8 @@ run_scan() {
   shift
   # run: は mktemp -d した作業ディレクトリを消さない (ランナーは使い捨てのため)。
   # TMPDIR を $tmp に向けて、このスクリプトの trap でまとめて消す。
+  # ジョブサマリは実行ごとに空にする (run: は追記するため、前の実行の内容が混ざる)。
+  : > "$tmp/summary"
   set +e
   out="$(
     cd "$dir" && env -u ENFORCE -u ALLOWED_SECRETS \
@@ -229,6 +231,18 @@ expect_output() {
   fi
 }
 
+# expect_no_chapter <説明>: ログとジョブサマリが AGENTS.md の章番号を案内していないこと。
+# 章番号は呼び出し元のリポジトリごとに異なるため、固定の番号を出すと誤った章へ誘導する。
+expect_no_chapter() {
+  local found
+  found="$(printf '%s\n' "$out" | cat - "$tmp/summary" | LC_ALL=C grep -nE 'AGENTS\.md[^0-9]{0,3}[0-9]' || true)"
+  if [ -s "$tmp/summary" ] && [ -z "$found" ]; then
+    report ok "$1"
+  else
+    report ng "$1" "ジョブサマリが空でなく、章番号を含む行が無いことを期待" "--- 章番号を含む行" "$found"
+  fi
+}
+
 # expect_abort <説明>: 異常終了し、「違反なし」とも報告していないこと。
 expect_abort() {
   if [ "$status" -ne 0 ] && [[ "$out" != *"検出されませんでした"* ]]; then
@@ -262,6 +276,7 @@ host .github/workflows/latin1.yml:1
 '
   run_scan "$violations"
   expect_hits "allowed_secrets なし: 許可リスト外の参照・鍵名・エンドポイントを検出する" 1 "$base_hits"
+  expect_no_chapter "違反時の案内に AGENTS.md の章番号を固定で出さない"
 
   # --- allowed_secrets あり (カンマ・空白・改行区切り、小文字も可) ---
   run_scan "$violations" ALLOWED_SECRETS=$'aws_role_arn, DEPLOY_HOST\nREVIEWDOG_GITHUB_API_TOKEN'
