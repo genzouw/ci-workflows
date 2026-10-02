@@ -4,8 +4,8 @@ name: auto-tag
 #
 # 【重要】本ワークフローは reusable workflow ではない。本リポジトリ自身の
 # リリース運用専用であり、他リポジトリへスタブを配布するものではない。
-# (.github/workflows/ 配下で workflow_call を持たないのは本ファイルと、
-# 検出ロジックのテスト専用の free-policy-test.yml だけ。他はすべて reusable)
+# (.github/workflows/ 配下で workflow_call を持たないワークフローは、本リポジトリ
+# 専用で他リポジトリへ配布しない。タグ付けの判定でも配布物として扱わない)
 #
 # なぜ必要か:
 #   呼び出し側リポジトリのスタブは `uses: .../<workflow>.yml@<SHA> # vX.Y.Z` の形で
@@ -101,12 +101,71 @@ jobs:
           # CI 定義に変更が無いなら、タグを打つ意味がない (呼び出し側が参照するのは
           # ワークフローと composite action だけ)。README だけの更新でタグ番号を
           # 消費しないようにする。既存タグが無い初回リリースでも、空のツリーを
-          # 起点に同じ判定を行う。auto-tag.yml と free-policy-test.yml は他リポジトリへ
-          # 配布しない (workflow_call を持たない) ため、これらだけの変更ではタグ番号を
-          # 消費しないよう除外する。配布物が変わらないタグを打つと、Renovate が
-          # 全呼び出し元へ中身の変わらない SHA 追従の PR を出すため。
-          # workflow_call を持たないワークフローを足したら、ここにも足す。
-          changed="$(git diff --name-only "${diff_base}" HEAD -- '.github/workflows' '.github/actions' ':(exclude).github/workflows/auto-tag.yml' ':(exclude).github/workflows/free-policy-test.yml')"
+          # 起点に同じ判定を行う。
+          #
+          # workflow_call を持たないワークフロー (本ファイルや *-test.yml) は他リポジトリへ
+          # 配布しないため、その変更ではタグ番号を消費しない。配布物が変わらないタグを
+          # 打つと、Renovate が全呼び出し元へ中身の変わらない SHA 追従の PR を出すため。
+          # 除外対象は手書きのリストにせず、workflow_call の有無から導出する
+          # (リストだと、配布しないワークフローを足したときの追記漏れを CI で検出できない)。
+          #
+          # 標準入力のワークフローが workflow_call を持てば true、持たなければ false を出す。
+          # コメントに workflow_call と書いてあるだけのファイルを誤判定しないよう、
+          # 文字列検索ではなく on: のキーを見る (on: は map / 配列 / 文字列のどれでも書ける)。
+          # explode(.): on: を YAML のエイリアス (on: *a) で書いた場合に備えて先に展開する。
+          # 展開しないと tag がどの型にも当たらず、reusable を警告なしで false と判定する。
+          is_reusable() {
+            # shellcheck disable=SC2016 # $o / $t は yq の変数で、シェルには展開させない。
+            yq 'explode(.) | .on as $o | ($o | tag) as $t | (($t == "!!map" and ($o | has("workflow_call"))) or ($t == "!!seq" and ($o | contains(["workflow_call"]))) or ($t == "!!str" and $o == "workflow_call"))'
+          }
+          # reusable_at <tree-ish> <path>: true / false / absent (その時点に無い) / unknown
+          # (YAML として読めない) のいずれかを出す。
+          reusable_at() {
+            if ! git cat-file -e "$1:$2" 2> /dev/null; then
+              echo absent
+              return
+            fi
+            git show "$1:$2" | is_reusable 2> /dev/null || echo unknown
+          }
+
+          # 変更前 (直近タグ) と変更後 (HEAD) のどちらでも reusable でなかったワークフロー
+          # だけを判定から外す。片方でも reusable なら配布物が変わっている (reusable の
+          # 削除や、workflow_call を外す変更も呼び出し元に影響する)。YAML として読めない
+          # 場合は配布物として扱い、タグを打つ側に倒す (打ち忘れると更新が止まるため)。
+          # .github/actions/ 配下と、YAML 以外のファイルは従来どおりすべて対象にする。
+          #
+          # --no-renames: リネームを「旧パスの削除 + 新パスの追加」として列挙させる。
+          # 既定のリネーム検出では新パスしか出ないため、reusable workflow をリネームして
+          # 同時に workflow_call を外した変更が、新パスの判定だけで除外されてしまう。
+          #
+          # 差分の列挙は while ループへのプロセス置換ではなくコマンド置換で受ける。
+          # プロセス置換だと git diff の失敗が set -e に伝わらず、changed が空のまま
+          # 「変更なし」として正常終了し、タグを打たない側へ無言で倒れるため。
+          files="$(git diff --name-only --no-renames "${diff_base}" HEAD -- '.github/workflows' '.github/actions')"
+          changed=""
+          while IFS= read -r path; do
+            [ -n "${path}" ] || continue
+            case "${path}" in
+              .github/workflows/*.yml | .github/workflows/*.yaml)
+                before="$(reusable_at "${diff_base}" "${path}")"
+                after="$(reusable_at HEAD "${path}")"
+                case "${before}:${after}" in
+                  *unknown*)
+                    # 打つ側に倒す方針は変えず、判定できなかった事実だけを残す。
+                    # ランナー同梱の yq が式を解釈できなくなると全ワークフローが
+                    # unknown になり、job は緑のまま配布物の変わらないタグを打ち続ける。
+                    echo "::warning::workflow_call の有無を判定できませんでした (${before} -> ${after})。配布物として扱います: ${path}"
+                    ;;
+                  absent:false | false:false | false:absent)
+                    echo "配布しないワークフローのため判定から除外: ${path}"
+                    continue
+                    ;;
+                esac
+                ;;
+            esac
+            changed+="${path}"$'\n'
+          done <<< "${files}"
+          changed="${changed%$'\n'}"
           if [ -z "${changed}" ]; then
             echo "${latest:-<初回>} 以降、CI 定義に変更がありません。タグ付けをスキップします。"
             exit 0
