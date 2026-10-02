@@ -115,17 +115,41 @@ put "$violations" docs/ci.yml <<'EOF'
 env:
   KEY: ${{ secrets.OPENAI_API_KEY }}
 EOF
-# 行内マーカー付きの行。どの検出にも出てはならない。
-# ci.yml の MARKED は検出 1 の除外しか通らないため、secrets: inherit・検出 2・検出 3 の
-# 除外をここで通す。別ファイルにしているのは、ci.yml の行番号と期待値を動かさないため。
+# 行内マーカー付きの行。
+# ci.yml の MARKED は検出 1 の除外しか通らないため、secrets: inherit と検出 2 の除外を
+# ここで通す。別ファイルにしているのは、ci.yml の行番号と期待値を動かさないため。
+#   4 行目・9 行目: 除外される (プロバイダ名を含まない鍵名 / secrets: inherit)
+#   5〜7 行目: マーカーがあっても除外されない (プロバイダ名付きの鍵名・課金 API の
+#             ホスト名・小文字で書いたプロバイダ名付きの Secret 名)
+#   12 行目: 除外される (プロバイダ名を名前の途中に含むだけの鍵名。ALEXA の EXA)
+#   13〜15 行目: マーカーがあっても除外されない (動的な添字・secrets コンテキスト全体の
+#               参照・静的な参照と動的な添字が同じ式にある行)
+# 行番号は下の期待値と対応しているので、行を足すときは末尾に足す。
 put "$violations" .github/workflows/marked.yml <<'EOF'
 jobs:
   build:
     steps:
+      - run: echo "$VENDOR_API_TOKEN" # free-policy: allow テスト用の例外
       - run: echo "$COHERE_API_KEY" # free-policy: allow テスト用の例外
       - run: curl https://api.mistral.ai/v1/models # free-policy: allow テスト用の例外
+      - run: echo "${{ secrets.gemini_api_key }}" # free-policy: allow テスト用の例外
   deploy:
     secrets: inherit # free-policy: allow テスト用の例外
+  extra:
+    env:
+      ALEXA: ${{ secrets.ALEXA_REFRESH_TOKEN }} # free-policy: allow テスト用の例外
+      DYNAMIC: ${{ secrets[format('{0}_{1}', 'GEMINI', 'API_KEY')] }} # free-policy: allow テスト用の例外
+      WHOLE: ${{ toJSON(secrets) }} # free-policy: allow テスト用の例外
+      MIXED: ${{ secrets.UNLISTED || secrets[matrix.name] }} # free-policy: allow テスト用の例外
+EOF
+# ファイル名がプロバイダ名付きの鍵名パターンに合致するファイル (HF_TOKEN_SYNC.YML)。
+# マーカーの判定は行の内容だけを見るため、プロバイダ名を含まない鍵名の行は
+# このファイルでも除外される (期待値に現れない)。
+put "$violations" .github/workflows/hf_token_sync.yml <<'EOF'
+jobs:
+  deploy:
+    env:
+      CF: ${{ secrets.CLOUDFLARE_API_TOKEN }} # free-policy: allow テスト用の例外
 EOF
 init_repo "$violations"
 
@@ -268,18 +292,26 @@ ref .github/workflows/ci.yml:14
 ref .github/workflows/ci.yml:16
 ref .github/workflows/latin1.yml:1
 ref k=v/action.yml:5
+ref .github/workflows/marked.yml:7
+ref .github/workflows/marked.yml:13
+ref .github/workflows/marked.yml:14
+ref .github/workflows/marked.yml:15
 ref renovate.json:3
 inherit .github/workflows/ci.yml:28
 key .github/workflows/ci.yml:23
 key .github/workflows/ci.yml:24
 key .github/workflows/latin1.yml:1
+key .github/workflows/marked.yml:5
 key k=v/action.yml:5
 host .github/workflows/ci.yml:25
 host .github/workflows/latin1.yml:1
+host .github/workflows/marked.yml:6
 '
   run_scan "$violations"
   expect_hits "allowed_secrets なし: 許可リスト外の参照・鍵名・エンドポイントを検出する" 1 "$base_hits"
   expect_no_chapter "違反時の案内に AGENTS.md の章番号を固定で出さない"
+  expect_output "違反時の案内に、マーカーで除外できない行があることを書く" 1 'でも除外できない'
+  expect_output "違反時の案内に、動的な secrets 参照はマーカーで除外できないことを書く" 1 'マーカーでは除外できない'
 
   # --- allowed_secrets あり (カンマ・空白・改行区切り、小文字も可) ---
   run_scan "$violations" ALLOWED_SECRETS=$'aws_role_arn, DEPLOY_HOST\nREVIEWDOG_GITHUB_API_TOKEN'
@@ -288,13 +320,19 @@ ref .github/workflows/ci.yml:11
 ref .github/workflows/ci.yml:12
 ref .github/workflows/ci.yml:13
 ref .github/workflows/latin1.yml:1
+ref .github/workflows/marked.yml:7
+ref .github/workflows/marked.yml:13
+ref .github/workflows/marked.yml:14
+ref .github/workflows/marked.yml:15
 ref renovate.json:3
 inherit .github/workflows/ci.yml:28
 key .github/workflows/ci.yml:23
 key .github/workflows/latin1.yml:1
+key .github/workflows/marked.yml:5
 key k=v/action.yml:5
 host .github/workflows/ci.yml:25
 host .github/workflows/latin1.yml:1
+host .github/workflows/marked.yml:6
 '
 
   # --- enforce: false ---
@@ -327,15 +365,21 @@ host .github/workflows/latin1.yml:1
   # そのため、指定した awk スクリプトの実行だけを失敗させ、他は本物の awk に渡す。
   local saved_path="$run_path" real_awk script
   real_awk="$(PATH="$run_path" command -v awk)"
-  for script in secrets-ref.awk key-name.awk; do
-    mkdir -p "$tmp/stub-$script"
-    cat > "$tmp/stub-$script/awk" <<EOF
+  # 3 つ目は行内マーカーの除外 (drop_marked)。awk スクリプトのファイルを持たないため、
+  # プログラム中のマーカー文字列で見分ける。
+  local stub_seq=0 stub_dir
+  for script in secrets-ref.awk key-name.awk 'free-policy: allow'; do
+    # ディレクトリ名に見分け用の文字列を使わない (: を含むと PATH の区切りと衝突する)。
+    stub_seq=$((stub_seq + 1))
+    stub_dir="$tmp/stub-awk-$stub_seq"
+    mkdir -p "$stub_dir"
+    cat > "$stub_dir/awk" <<EOF
 #!/bin/sh
-case "\$*" in *$script*) exit 2 ;; esac
+case "\$*" in *"$script"*) exit 2 ;; esac
 exec "$real_awk" "\$@"
 EOF
-    chmod +x "$tmp/stub-$script/awk"
-    run_path="$tmp/stub-$script:$saved_path"
+    chmod +x "$stub_dir/awk"
+    run_path="$stub_dir:$saved_path"
     run_scan "$clean"
     expect_abort "awk (${script}) が異常終了したら job が失敗する"
     run_path="$saved_path"

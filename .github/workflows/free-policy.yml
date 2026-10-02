@@ -35,7 +35,8 @@ on:
           GITHUB_TOKEN に加えて参照を許可する Secret 名・鍵変数名 (カンマ / 空白 / 改行区切り)。
           既定は空 (GITHUB_TOKEN のみ許可)。鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・
           プロバイダ名付き) に合致する名前は、名前に GITHUB を単語として含むものを除き指定できない
-          (該当行の `free-policy: allow <理由>` で除外する)。
+          (プロバイダ名を含まない名前は、該当行の `free-policy: allow <理由>` で除外する。
+          プロバイダ名付きの名前はマーカーでも除外できない)。
         type: string
         required: false
         default: ""
@@ -66,9 +67,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 走査対象はバイト列として扱う。UTF-8 ロケールの GNU grep は、不正な UTF-8
-          # バイトを含む行をマーカー除外 (grep -v) の出力から落とし、終了コードは 0 の
-          # ままなので、その行の違反が報告されずに消える。検出パターンとマーカーは
+          # 走査対象はバイト列として扱う。UTF-8 ロケールでは、不正な UTF-8 バイトを含む
+          # 行を grep の検索 (scan_lines) と awk の照合 (toupper / tolower と正規表現)
+          # が正しく扱えない。GNU grep はそのファイルをバイナリとみなして -I で
+          # 読み飛ばし、終了コードは 0 のままなので、その行の違反が報告されずに消える。
+          # BSD awk は illegal byte sequence で異常終了する。検出パターンとマーカーは
           # ASCII だけで書いているため、C ロケールでも判定は変わらない。
           export LC_ALL=C
 
@@ -118,8 +121,14 @@ jobs:
           key_pattern='[A-Z][A-Z0-9]*(_[A-Z0-9]+)*_(API_KEY|API_TOKEN|SECRET_KEY)'
           provider_pattern='(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_GENERATIVE_AI|VERTEX_AI|AZURE_OPENAI|MISTRAL|COHERE|GROQ|DEEPSEEK|PERPLEXITY|XAI|TOGETHER|OPENROUTER|HUGGINGFACE|HF|REPLICATE|TAVILY|EXA|SERPAPI|BRAVE|FIRECRAWL)_[A-Z0-9_]*(KEY|TOKEN|URL|ENDPOINT)'
 
+          # 課金可能な LLM / 検索 API のエンドポイント (検出 3 と、行内マーカーの判定で使う)。
+          host_pattern='(api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|api\.deepseek\.com|api\.mistral\.ai|api\.cohere\.(ai|com)|api\.groq\.com|api\.perplexity\.ai|api\.x\.ai|api\.together\.(xyz|ai)|openrouter\.ai|api\.tavily\.com|api\.exa\.ai|serpapi\.com|api\.search\.brave\.com|api\.firecrawl\.dev|api\.replicate\.com|(api-inference|router)\.huggingface\.co)'
+
           # --- 例外の指定方法 ---------------------------------------------
           # 1) 行内マーカー: 対象行に `free-policy: allow <理由>` を含むコメントを書く。
+          #    プロバイダ名付きの鍵名 (provider_pattern) か課金 API のホスト名 (host_pattern)
+          #    を含む行と、どの Secret を読むか静的に決まらない secrets 参照 (動的な添字・
+          #    コンテキスト全体の参照) は、マーカーがあっても除外しない (下の drop_marked を参照)。
           # 2) inputs.allowed_secrets: リポジトリ単位で許可する Secret 名・鍵変数名。
           #    デプロイ用の資格情報 (AWS_ROLE_ARN 等) のように同じ名前を何度も参照する
           #    リポジトリで、全行にマーカーを貼らずに済ませるためのもの。
@@ -148,7 +157,7 @@ jobs:
             fi
             if [[ "$name" =~ $provider_pattern ]] \
               || { [[ "$name" =~ $key_pattern ]] && ! [[ "$name" =~ $github_pattern ]]; }; then
-              echo "::error::allowed_secrets に鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・プロバイダ名付き) に合致する名前は指定できません。課金を伴わない正当な参照は該当行に 'free-policy: allow <理由>' を付けてください: ${name}"
+              echo "::error::allowed_secrets に鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・プロバイダ名付き) に合致する名前は指定できません。課金を伴わない正当な参照は該当行に 'free-policy: allow <理由>' を付けてください (プロバイダ名付きの鍵名はマーカーでも除外できません): ${name}"
               exit 1
             fi
           done
@@ -157,6 +166,51 @@ jobs:
             echo ""
           fi
           allowed_names="${allowed[*]}"
+
+          # 行内マーカーの付いた行を検出結果 (標準入力) から外す。
+          # ただし、プロバイダ名付きの鍵名か課金 API のホスト名を含む行と、どの Secret を
+          # 読むか静的に決まらない secrets 参照の行は外さない。
+          # マーカーに制限が無いと、名指しで MUST NOT としている LLM プロバイダの鍵の参照も
+          # マーカー 1 つで通ってしまう。失敗時のログがマーカーを案内するため、CI を通したい
+          # エージェントがそのまま足す経路になる。allowed_secrets が同じ名前を拒否している
+          # のに、行内マーカーでは通るという食い違いも無くす。
+          # 汎用の鍵名パターン (key_pattern) だけに合致する行は従来どおり除外できる
+          # (課金を伴わないサービスの鍵を、理由を書いたうえで通すための逃げ道)。
+          #
+          # プロバイダ名は、識別子の先頭か `_` の直後から始まる場合だけ合致させる
+          # (左側に英数字が続く場合は合致させない)。境界が無いと、短いプロバイダ名を
+          # 名前の途中に含むだけの無関係な鍵まで除外できなくなる。そうした名前は
+          # allowed_secrets でも拒否されるため、通す手段がマーカーしか無い。
+          # `_` を境界に含めているのは、プロバイダ名の前に接頭辞を足すだけで
+          # 擦り抜けられないようにするため。
+          #
+          # 引数に tagged を渡すと、各行を「種別<TAB>検出行」として読む (検出 1 の出力)。
+          # 種別が dynamic の行は、マーカーがあっても除外しない。動的な添字と secrets
+          # コンテキスト全体の参照は、どの Secret を読むか静的に決まらないため、行に
+          # プロバイダ名が現れなくてもプロバイダの鍵を読める。
+          #
+          # Secret 名とホスト名は大文字小文字を区別しないため、行を大文字 / 小文字に
+          # 揃えてから照合する (小文字で書いた Secret 名で擦り抜けられないようにする)。
+          # 照合するのは行の内容だけで、検出行の先頭の「パス:行番号:」は外す。パスまで
+          # 照合すると、ファイル名がプロバイダ名付きのパターンに合致するファイル
+          # (hf_token_sync.yml など) では、行の内容に関係なくマーカーが 1 行も効かなくなる。
+          # パスに `:` を含む場合は前置を外せず、パスも照合の対象に残る (除外が減る側)。
+          # パターンは -v ではなく環境変数で渡す。-v はバックスラッシュをエスケープとして
+          # 解釈するため、host_pattern の `\.` が崩れる。
+          # awk が異常終了した場合は、呼び出し側の代入で set -e が効いて job が失敗する。
+          drop_marked() {
+            PROVIDER="(^|[^A-Z0-9])$provider_pattern" HOST="$host_pattern" TAGGED="${1:-}" awk '
+              ENVIRON["TAGGED"] != "" {
+                tab = index($0, "\t")
+                kind = substr($0, 1, tab - 1)
+                $0 = substr($0, tab + 1)
+                if (kind == "dynamic") { print; next }
+              }
+              { body = $0; sub(/^[^:]*:[0-9]+:/, "", body) }
+              index(body, "free-policy: allow") && toupper(body) !~ ENVIRON["PROVIDER"] && tolower(body) !~ ENVIRON["HOST"] { next }
+              { print }
+            '
+          }
 
           # --- 1. secrets ホワイトリスト ----------------------------------
           # 式 (二重波括弧の内側) に現れる secrets コンテキストの参照だけを見る。
@@ -179,8 +233,13 @@ jobs:
           # 波括弧を 2 つ続けて書かない (書くと自分自身を式の開始と誤認する)。
           cat > "$work/secrets-ref.awk" <<'AWK'
           function is_ident(c) { return c ~ /[A-Z0-9_.-]/ }
-          # 許可リストに無い secrets 参照が s に含まれていれば 1 を返す。
-          function violates(s,    pos, prev, rest, name) {
+          # 許可リストに無い secrets 参照が s に含まれていれば 1 か 2 を返す (無ければ 0)。
+          #   1: 名前を静的に読める参照 (.NAME と、文字列リテラルの添字) だけが違反
+          #   2: どの Secret を読むか静的に決まらない参照 (動的な添字・一括参照・
+          #      コンテキスト全体の参照) を含む。行内マーカーでも除外しない
+          # 1 つの式に両方がある場合に 2 を返せるよう、1 では打ち切らず最後まで調べる。
+          function violates(s,    pos, prev, rest, name, found) {
+            found = 0
             s = toupper(s)
             while ((pos = index(s, "SECRETS")) > 0) {
               prev = (pos > 1) ? substr(s, pos - 1, 1) : ""
@@ -194,26 +253,26 @@ jobs:
                 sub(/^[ \t]+/, "", rest)
                 if (match(rest, /^[A-Z_][A-Z0-9_]*/)) {
                   name = substr(rest, 1, RLENGTH)
-                  if (!(name in ok)) return 1
+                  if (!(name in ok)) found = 1
                 } else {
-                  return 1 # secrets.* などの一括参照
+                  return 2 # secrets.* などの一括参照
                 }
               } else if (substr(rest, 1, 1) == "[") {
                 if (match(rest, /^\[[ \t]*["'][A-Z_][A-Z0-9_]*["'][ \t]*\]/)) {
                   name = substr(rest, 1, RLENGTH)
                   gsub(/[^A-Z0-9_]/, "", name)
-                  if (!(name in ok)) return 1
+                  if (!(name in ok)) found = 1
                 } else {
-                  return 1 # 添字が動的で、どの Secret を読むか静的に決まらない
+                  return 2 # 添字が動的で、どの Secret を読むか静的に決まらない
                 }
               } else if (rest == "" || substr(rest, 1, 1) !~ /[A-Z0-9_-]/) {
                 # secrets コンテキスト全体の参照 (toJSON に丸ごと渡すなど)。全 Secret を
                 # 1 つの値として渡すため、どの Secret を読むか静的に決まらない。
                 # 行末で切れた参照 (次行が .NAME で続く書き方) もここで違反になる。
-                return 1
+                return 2
               }
             }
-            return 0
+            return found
           }
           # 文字列リテラルの外にある最初の閉じ括りの位置を返す (無ければ 0)。
           # 式の文字列リテラルはシングルクォートで、内側のクォートは 2 つ重ねて書くため、
@@ -257,21 +316,23 @@ jobs:
                 }
               }
             }
-            if (violates(expr)) print fname ":" FNR ":" $0
+            # 種別を行頭に付けて出力する (drop_marked が種別を見て、マーカーで除外できるかを決める)。
+            v = violates(expr)
+            if (v) print (v == 2 ? "dynamic" : "static") "\t" fname ":" FNR ":" $0
           }
           AWK
 
           # awk の結果は先に変数へ受ける。パイプの後ろに `|| true` を付けると、awk の
           # 異常終了 (構文エラー・実装差) まで吸収して「違反なし」で成功してしまうため。
           # 単独の代入なら set -e が効き、awk が非ゼロを返した時点で job が失敗する。
-          # `|| true` が吸収するのは「マーカー除外後に 1 行も残らない」場合だけにする。
+          # マーカーの除外 (drop_marked) と空行の除去 (sed) は、1 行も残らなくても 0 を返す。
           #
           # awk に渡すパスには ./ を前置する。awk は「名前=値」の形をした引数を、-- の
           # 後ろでもファイルではなく変数代入として扱うため、パスに = を含む走査対象
           # (例: k=v/action.yml) が読まれないまま検出から外れる。./ で始まる引数は
           # 代入として解釈されない。前置した ./ は awk 側で出力時に外す。
           raw="$(awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]/#/./}")"
-          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
+          hits="$(printf '%s\n' "$raw" | drop_marked tagged | sed '/^$/d')"
           add_finding '許可されていない secrets 参照 (完全無料ポリシー: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
           # grep も awk と同じく、結果を先に変数へ受けてからマーカーを除外する。
@@ -281,7 +342,7 @@ jobs:
             grep -HnEI -e "$1" -- "${targets[@]}" || [ "$?" -eq 1 ]
           }
           raw="$(scan_lines "^[[:space:]]*-?[[:space:]]*[\"']?secret[s][\"']?[[:space:]]*:[[:space:]]*inherit")"
-          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
+          hits="$(printf '%s\n' "$raw" | drop_marked | sed '/^$/d')"
           add_finding 'secrets: inherit (全 Secrets を無条件に転送するため禁止)' "$hits"
 
           # --- 2. 従量課金 API キーを示す変数名 ---------------------------
@@ -311,13 +372,12 @@ jobs:
             awk -v allowed="$allowed_names" -v key="$key_pattern" -v provider="$provider_pattern" \
               -f "$work/key-name.awk" -- "${targets[@]/#/./}"
           )"
-          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
+          hits="$(printf '%s\n' "$raw" | drop_marked | sed '/^$/d')"
           add_finding '従量課金 API キーを示す変数名 (完全無料ポリシー: 従量課金 API キーの利用は MUST NOT)' "$hits"
 
           # --- 3. 課金可能な API エンドポイント ---------------------------
-          host_pattern='(api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|api\.deepseek\.com|api\.mistral\.ai|api\.cohere\.(ai|com)|api\.groq\.com|api\.perplexity\.ai|api\.x\.ai|api\.together\.(xyz|ai)|openrouter\.ai|api\.tavily\.com|api\.exa\.ai|serpapi\.com|api\.search\.brave\.com|api\.firecrawl\.dev|api\.replicate\.com|(api-inference|router)\.huggingface\.co)'
           raw="$(scan_lines "$host_pattern")"
-          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
+          hits="$(printf '%s\n' "$raw" | drop_marked | sed '/^$/d')"
           add_finding '課金可能な API エンドポイントへの接続先 (完全無料ポリシー: OpenAI 互換エンドポイント経由も MUST NOT)' "$hits"
 
           # --- 判定 -------------------------------------------------------
@@ -336,6 +396,8 @@ jobs:
             echo ""
             echo "判断基準は、対象リポジトリの AGENTS.md で完全無料ポリシー (CI/CD で利用できるサービスの条件) を定めた章を参照してください。"
             echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けるか、スタブの \`allowed_secrets\` に Secret 名を追加することで除外できます。"
+            echo "ただし、LLM / 検索 API のプロバイダ名付きの鍵名と、課金可能な API のエンドポイントを含む行は、どちらの方法でも除外できません。該当の処理を CI から取り除いてください。"
+            echo "動的な添字での secrets 参照と、secrets コンテキスト全体の参照 (どの Secret を読むか静的に決まらない形) も、マーカーでは除外できません。Secret 名を静的に書いてください。"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
@@ -343,6 +405,8 @@ jobs:
           echo "  - 従量課金 API キー / 課金可能エンドポイントへの依存を取り除く (AGENTS.md の完全無料ポリシーの章)"
           echo "  - 正当な例外の場合は該当行に \`free-policy: allow <理由>\` のコメントを付ける"
           echo "  - 同じ Secret を複数箇所で参照する場合はスタブの \`allowed_secrets\` に名前を追加する"
+          echo "  - LLM / 検索 API のプロバイダ名付きの鍵名・課金可能な API のエンドポイントを含む行は、マーカーでも \`allowed_secrets\` でも除外できない。該当の処理を CI から取り除く"
+          echo "  - 動的な添字での secrets 参照と、secrets コンテキスト全体の参照は、マーカーでは除外できない。Secret 名を静的に書く"
 
           if [ "${ENFORCE:-true}" = "false" ]; then
             echo "::warning::完全無料ポリシー違反の疑いを検出しました (enforce: false のため警告のみ)。"
