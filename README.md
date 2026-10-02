@@ -386,7 +386,7 @@ bash tests/free-policy.sh
 
 - bash 4.4 以上と `yq`（mikefarah 版）が必要
 - PATH にある awk 実装（`awk` / `gawk` / `mawk`）のすべてで実行する。`FREE_POLICY_TEST_AWKS="gawk mawk"` のように指定すると、その実装だけで実行する
-- CI では本リポジトリ専用の `free-policy-test.yml` が、`free-policy.yml` かテストを変更したときに実行する
+- CI では本リポジトリ専用の `free-policy-test.yml` が、`free-policy.yml` かテストを変更したときと、週 1 回（毎週月曜）に実行する。定期実行は、ランナー同梱の `yq` / `awk` がイメージ更新で変わり、こちらが何も変更していないのに検出が壊れる場合に気づくためのもの。失敗の通知は、GitHub の既定では最後にこのワークフローの `schedule` を変更した人に届く
 - 検出ロジックを変更するときは、変更内容に対応するケースをフィクスチャに足す。フィクスチャをファイルとして `.github/` 配下や `*/action.yml` に置くとセルフスキャンが違反として検出するため、スクリプト内で生成する
 
 ### 検出しないもの（レビュー運用でカバー）
@@ -696,7 +696,7 @@ jobs:
   - 除外するのは、直近タグの時点と HEAD のどちらでも `workflow_call` を持たない（または存在しない）ワークフローだけである。reusable workflow の削除や、`workflow_call` を外す・足す変更は配布物の変更として扱い、タグを打つ
   - YAML として読めないワークフローは配布物として扱い、タグを打つ側に倒す。このとき `::warning::` を出し、読めなかったために対象になったことをログに残す
 
-タグ付けの判定は `tests/auto-tag.sh` で検証する。`auto-tag.yml` は main への push でしか動かず PR 上で確かめられないため、`run:` を `yq` で取り出し、実行時に作った git リポジトリに対して実行して、作られるタグ（またはスキップ）を期待値と突き合わせる。タグを作る `gh api` はスタブに差し替える。CI では本リポジトリ専用の `auto-tag-test.yml` が、`auto-tag.yml` かテストを変更したときに実行する。
+タグ付けの判定は `tests/auto-tag.sh` で検証する。`auto-tag.yml` は main への push でしか動かず PR 上で確かめられないため、`run:` を `yq` で取り出し、実行時に作った git リポジトリに対して実行して、作られるタグ（またはスキップ）を期待値と突き合わせる。タグを作る `gh api` はスタブに差し替える。CI では本リポジトリ専用の `auto-tag-test.yml` が、`auto-tag.yml` かテストを変更したときと、週 1 回（毎週月曜）に実行する。定期実行の目的と失敗通知の届き先は `free-policy-test.yml` と同じである。
 
 ```bash
 bash tests/auto-tag.sh
