@@ -1,0 +1,51 @@
+name: free-policy-test
+
+# free-policy.yml の検出ロジックをフィクスチャで検証する (本リポジトリ専用)。
+#
+# free-policy.yml のセルフスキャンは inputs が常に空で、走査対象も本リポジトリの
+# CI 定義だけなので、「違反を検出する経路」と「allowed_secrets を渡した経路」が
+# 一度も実行されない。検出ロジックを変えたときの後退は、変更前後で同じ
+# フィクスチャを流さないと見つからないため、tests/free-policy.sh で検証する。
+#
+# workflow_call は持たない。free-policy.yml に job を足すと呼び出し元リポジトリでも
+# 実行されてしまうが、テストスクリプトは本リポジトリにしか無いため。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/free-policy.yml"
+      - ".github/workflows/free-policy-test.yml"
+      - "tests/free-policy.sh"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/free-policy.yml"
+      - ".github/workflows/free-policy-test.yml"
+      - "tests/free-policy.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  free-policy-test:
+    name: free-policy-test (detection logic fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run free-policy fixture tests
+        run: |
+          set -euo pipefail
+          # yq はランナー同梱のものを使う (run: の取り出しに使用)。
+          yq --version
+          # awk は実装ごとに挙動が違うため、ランナーにある実装 (awk / gawk / mawk) の
+          # すべてで実行する。どの実装で走ったかはスクリプトが末尾に出力する。
+          bash tests/free-policy.sh
