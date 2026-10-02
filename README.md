@@ -674,7 +674,7 @@ jobs:
 
 **main へマージすると `auto-tag.yml` がタグを自動で作成する。** 手動でタグを打つ必要はない。呼び出し側は Renovate がタグに対応する SHA へ自動更新する。
 
-`auto-tag.yml` は本リポジトリ自身のリリース運用専用であり、**reusable workflow ではない**（他リポジトリへ配布しない）。`.github/workflows/` 配下で `workflow_call` を持たないワークフロー（`auto-tag.yml` と、テスト専用の `free-policy-test.yml` / `auto-tag-test.yml`）は本リポジトリ専用で、他リポジトリへ配布しない。
+`auto-tag.yml` は本リポジトリ自身のリリース運用専用であり、**reusable workflow ではない**（他リポジトリへ配布しない）。`.github/workflows/` 配下で `workflow_call` を持たないワークフロー（`auto-tag.yml` や、テスト専用の `*-test.yml` など）は本リポジトリ専用で、他リポジトリへ配布しない。
 
 ### 採番の規則
 
