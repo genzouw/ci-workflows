@@ -121,6 +121,8 @@ EOF
 #   4 行目・9 行目: 除外される (プロバイダ名を含まない鍵名 / secrets: inherit)
 #   5〜7 行目: マーカーがあっても除外されない (プロバイダ名付きの鍵名・課金 API の
 #             ホスト名・小文字で書いたプロバイダ名付きの Secret 名)
+#   12 行目: 除外される (プロバイダ名を名前の途中に含むだけの鍵名。ALEXA の EXA)
+# 行番号は下の期待値と対応しているので、行を足すときは末尾に足す。
 put "$violations" .github/workflows/marked.yml <<'EOF'
 jobs:
   build:
@@ -131,6 +133,9 @@ jobs:
       - run: echo "${{ secrets.gemini_api_key }}" # free-policy: allow テスト用の例外
   deploy:
     secrets: inherit # free-policy: allow テスト用の例外
+  extra:
+    env:
+      ALEXA: ${{ secrets.ALEXA_REFRESH_TOKEN }} # free-policy: allow テスト用の例外
 EOF
 init_repo "$violations"
 

@@ -173,13 +173,20 @@ jobs:
           # 汎用の鍵名パターン (key_pattern) だけに合致する行は従来どおり除外できる
           # (課金を伴わないサービスの鍵を、理由を書いたうえで通すための逃げ道)。
           #
+          # プロバイダ名は、識別子の先頭か `_` の直後から始まる場合だけ合致させる
+          # (左側に英数字が続く場合は合致させない)。境界が無いと、短いプロバイダ名を
+          # 名前の途中に含むだけの無関係な鍵まで除外できなくなる。そうした名前は
+          # allowed_secrets でも拒否されるため、通す手段がマーカーしか無い。
+          # `_` を境界に含めているのは、プロバイダ名の前に接頭辞を足すだけで
+          # 擦り抜けられないようにするため。
+          #
           # Secret 名とホスト名は大文字小文字を区別しないため、行を大文字 / 小文字に
           # 揃えてから照合する (小文字で書いた Secret 名で擦り抜けられないようにする)。
           # パターンは -v ではなく環境変数で渡す。-v はバックスラッシュをエスケープとして
           # 解釈するため、host_pattern の `\.` が崩れる。
           # awk が異常終了した場合は、呼び出し側の代入で set -e が効いて job が失敗する。
           drop_marked() {
-            PROVIDER="$provider_pattern" HOST="$host_pattern" awk '
+            PROVIDER="(^|[^A-Z0-9])$provider_pattern" HOST="$host_pattern" awk '
               index($0, "free-policy: allow") && toupper($0) !~ ENVIRON["PROVIDER"] && tolower($0) !~ ENVIRON["HOST"] { next }
               { print }
             '
