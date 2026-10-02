@@ -4,7 +4,8 @@ name: free-policy
 # 機械的に判定できる違反パターンを CI で検出する。
 #
 # 検出するもの (構文的に判定可能):
-#   1. GITHUB_TOKEN 以外の `secrets.*` 参照 / `secrets: inherit` (ゼロ Secrets 原則)
+#   1. 許可リスト (GITHUB_TOKEN + inputs.allowed_secrets) に無い `secrets.*` 参照 /
+#      `secrets: inherit` (既定はゼロ Secrets 原則)
 #   2. 従量課金 API キーを示す環境変数名 (`*_API_KEY` 等・プロバイダ名付きの鍵/URL)
 #   3. 課金可能な LLM / 検索 API のエンドポイントホスト名
 #
@@ -25,6 +26,15 @@ on:
         type: boolean
         required: false
         default: true
+      allowed_secrets:
+        description: >-
+          GITHUB_TOKEN に加えて参照を許可する Secret 名・鍵変数名 (カンマ / 空白 / 改行区切り)。
+          既定は空 (GITHUB_TOKEN のみ許可)。鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・
+          プロバイダ名付き) に合致する名前は、名前に GITHUB を単語として含むものを除き指定できない
+          (該当行の `free-policy: allow <理由>` で除外する)。
+        type: string
+        required: false
+        default: ""
   push:
     branches: [main, master]
   pull_request:
@@ -48,10 +58,17 @@ jobs:
           # workflow_call 以外のイベント (本リポジトリのセルフテスト) では
           # inputs が存在せず空文字になるため、既定は「enforce する」に倒す。
           ENFORCE: ${{ inputs.enforce }}
+          ALLOWED_SECRETS: ${{ inputs.allowed_secrets }}
         run: |
           set -euo pipefail
 
-          # --- 走査対象 -------------------------------------------------
+          # 走査対象はバイト列として扱う。UTF-8 ロケールの GNU grep は、不正な UTF-8
+          # バイトを含む行をマーカー除外 (grep -v) の出力から落とし、終了コードは 0 の
+          # ままなので、その行の違反が報告されずに消える。検出パターンとマーカーは
+          # ASCII だけで書いているため、C ロケールでも判定は変わらない。
+          export LC_ALL=C
+
+          # --- 走査対象-------------------------------------------------
           # 本ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの
           # 組み込み」であるため、対象は .github 配下の YAML / JSON 設定と
           # composite action 定義に限定する。README や AGENTS.md がポリシー
@@ -83,23 +100,9 @@ jobs:
           printf '走査対象: %s\n' "${targets[@]}"
           echo ""
 
-          # 正当な例外は、対象行に `free-policy: allow <理由>` を含むコメントを
-          # 書くことで除外できる (差分レビューで必ず可視化されるようにするため、
-          # 別ファイルの allowlist ではなく行内マーカー方式を採る)。
-          cat > /tmp/allowed-token.awk <<'AWK'
-          # 許可された secrets 参照 (GITHUB_TOKEN のみ) を取り除いてもなお
-          # secrets 参照が残る行だけを違反として出力する。
-          {
-            rest = $0
-            gsub(/secrets\.GITHUB_TOKEN/, "", rest)
-            gsub(/secrets\[[[:space:]]*["']GITHUB_TOKEN["'][[:space:]]*\]/, "", rest)
-            if (rest ~ /secrets\./ || rest ~ /secrets\[/) {
-              print
-            }
-          }
-          AWK
-
-          findings="$(mktemp)"
+          work="$(mktemp -d)"
+          findings="$work/findings"
+          : > "$findings"
 
           add_finding() {
             if [ -n "$2" ]; then
@@ -107,36 +110,210 @@ jobs:
             fi
           }
 
-          # --- 1. secrets ホワイトリスト (GITHUB_TOKEN 以外は禁止) --------
-          hits="$(
-            grep -HnEI -e 'secret[s][.][A-Za-z_]' -e 'secret[s]\[' -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' \
-              | awk -f /tmp/allowed-token.awk || true
-          )"
-          add_finding 'GITHUB_TOKEN 以外の secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
-
-          hits="$(
-            grep -HnEI -e "^[[:space:]]*-?[[:space:]]*[\"']?secret[s][\"']?[[:space:]]*:[[:space:]]*inherit" -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' || true
-          )"
-          add_finding 'secrets: inherit (全 Secrets を無条件に転送するため禁止)' "$hits"
-
-          # --- 2. 従量課金 API キーを示す変数名 ---------------------------
           # 汎用パターン (未知のプロバイダも捕捉する) とプロバイダ名付きパターンの併用。
           key_pattern='[A-Z][A-Z0-9]*(_[A-Z0-9]+)*_(API_KEY|API_TOKEN|SECRET_KEY)'
           provider_pattern='(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_GENERATIVE_AI|VERTEX_AI|AZURE_OPENAI|MISTRAL|COHERE|GROQ|DEEPSEEK|PERPLEXITY|XAI|TOGETHER|OPENROUTER|HUGGINGFACE|HF|REPLICATE|TAVILY|EXA|SERPAPI|BRAVE|FIRECRAWL)_[A-Z0-9_]*(KEY|TOKEN|URL|ENDPOINT)'
-          hits="$(
-            grep -HnEI -e "$key_pattern" -e "$provider_pattern" -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' || true
+
+          # --- 例外の指定方法 ---------------------------------------------
+          # 1) 行内マーカー: 対象行に `free-policy: allow <理由>` を含むコメントを書く。
+          # 2) inputs.allowed_secrets: リポジトリ単位で許可する Secret 名・鍵変数名。
+          #    デプロイ用の資格情報 (AWS_ROLE_ARN 等) のように同じ名前を何度も参照する
+          #    リポジトリで、全行にマーカーを貼らずに済ませるためのもの。
+          # どちらもスタブ / ワークフローの差分に現れるため、例外の追加は必ずレビューで
+          # 可視化される (別ファイルの allowlist にしないのはこのため)。
+          #
+          # 検出 2 の鍵名パターン (provider_pattern / key_pattern) に合致する名前は
+          # allowed_secrets では許可しない。AGENTS.md 1.1 が名指しで MUST NOT としている
+          # 鍵や未知のプロバイダ鍵を、リポジトリ単位の一括許可で通せてしまうと検査の
+          # 意味がなくなるため (許可した名前は検出 2 から丸ごと外れる)。
+          # 拒否の判定を検出 2 と同じパターンにしておけば、両者の食い違いで穴が開かない。
+          # 例外は GitHub 自身の資格情報 (reviewdog が GitHub のトークンを受け取る変数名
+          # など、名前に GITHUB を単語として含み、provider_pattern に合致しないもの) で、
+          # 課金を伴わないため許可する。
+          #
+          # このコメントには鍵名の実例を書かない。本ワークフロー自身も走査対象で、
+          # 書いた鍵名が検出 2 に合致してセルフスキャンが失敗するため。
+          github_pattern='(^|_)GITHUB(_|$)'
+          mapfile -t allowed < <(
+            printf '%s' "${ALLOWED_SECRETS:-}" | tr ',[:space:]' '\n' | sed '/^$/d' | tr '[:lower:]' '[:upper:]' | sort -u
+          )
+          for name in "${allowed[@]}"; do
+            if ! [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+              echo "::error::allowed_secrets に Secret 名として不正な値があります: ${name}"
+              exit 1
+            fi
+            if [[ "$name" =~ $provider_pattern ]] \
+              || { [[ "$name" =~ $key_pattern ]] && ! [[ "$name" =~ $github_pattern ]]; }; then
+              echo "::error::allowed_secrets に鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・プロバイダ名付き) に合致する名前は指定できません。課金を伴わない正当な参照は該当行に 'free-policy: allow <理由>' を付けてください: ${name}"
+              exit 1
+            fi
+          done
+          if [ "${#allowed[@]}" -gt 0 ]; then
+            printf '許可された Secret 名 (allowed_secrets): %s\n' "${allowed[*]}"
+            echo ""
+          fi
+          allowed_names="${allowed[*]}"
+
+          # --- 1. secrets ホワイトリスト ----------------------------------
+          # 式 (二重波括弧の内側) に現れる secrets コンテキストの参照だけを見る。
+          # 行全体を文字列検索すると、run: 内の Python 標準ライブラリ呼び出し
+          # (secrets.token_hex) やファイル名 (.secrets.baseline) を誤検知するため。
+          # GitHub Actions では secrets コンテキストは式の中でしか参照できない
+          # (if: は式の括りを省略できるが、secrets コンテキスト自体が使えない)。
+          # Renovate 設定のテンプレートも同じ二重波括弧なので同じ規則で拾える。
+          #
+          # 括りが閉じないまま行が終わった場合は次行以降も式の内側として扱う
+          # (複数行にまたがる式を取りこぼさないため。誤って開いたままになっても
+          # 検出が増える方向にしか倒れない)。
+          # 閉じ括りは、式の中の文字列リテラル (シングルクォート) を読み飛ばしてから探す。
+          # リテラル内の閉じ括りで式が終わったと判定すると、同じ式の後続の参照を見逃すため。
+          # クォートが行内で閉じない場合はその行に閉じ括りが無いものとして扱い、
+          # こちらも検出が増える方向に倒す。
+          # 式・Secret 名はどちらも大文字小文字を区別しないため、大文字に揃えて比較する。
+          #
+          # 本ワークフロー自身も走査対象なので、awk 内では括りの文字列を連結で組み立て、
+          # 波括弧を 2 つ続けて書かない (書くと自分自身を式の開始と誤認する)。
+          cat > "$work/secrets-ref.awk" <<'AWK'
+          function is_ident(c) { return c ~ /[A-Z0-9_.-]/ }
+          # 許可リストに無い secrets 参照が s に含まれていれば 1 を返す。
+          function violates(s,    pos, prev, rest, name) {
+            s = toupper(s)
+            while ((pos = index(s, "SECRETS")) > 0) {
+              prev = (pos > 1) ? substr(s, pos - 1, 1) : ""
+              rest = substr(s, pos + 7)
+              s = rest
+              # 別の識別子・プロパティの一部 (例: steps.x.outputs.secrets) は対象外。
+              if (prev != "" && is_ident(prev)) continue
+              sub(/^[ \t]+/, "", rest)
+              if (substr(rest, 1, 1) == ".") {
+                rest = substr(rest, 2)
+                sub(/^[ \t]+/, "", rest)
+                if (match(rest, /^[A-Z_][A-Z0-9_]*/)) {
+                  name = substr(rest, 1, RLENGTH)
+                  if (!(name in ok)) return 1
+                } else {
+                  return 1 # secrets.* などの一括参照
+                }
+              } else if (substr(rest, 1, 1) == "[") {
+                if (match(rest, /^\[[ \t]*["'][A-Z_][A-Z0-9_]*["'][ \t]*\]/)) {
+                  name = substr(rest, 1, RLENGTH)
+                  gsub(/[^A-Z0-9_]/, "", name)
+                  if (!(name in ok)) return 1
+                } else {
+                  return 1 # 添字が動的で、どの Secret を読むか静的に決まらない
+                }
+              } else if (rest == "" || substr(rest, 1, 1) !~ /[A-Z0-9_-]/) {
+                # secrets コンテキスト全体の参照 (toJSON に丸ごと渡すなど)。全 Secret を
+                # 1 つの値として渡すため、どの Secret を読むか静的に決まらない。
+                # 行末で切れた参照 (次行が .NAME で続く書き方) もここで違反になる。
+                return 1
+              }
+            }
+            return 0
+          }
+          # 文字列リテラルの外にある最初の閉じ括りの位置を返す (無ければ 0)。
+          # 式の文字列リテラルはシングルクォートで、内側のクォートは 2 つ重ねて書くため、
+          # クォートごとに内外を反転させるだけで追える。
+          function find_close(s,    i, n, c, quoted) {
+            n = length(s)
+            quoted = 0
+            for (i = 1; i <= n; i++) {
+              c = substr(s, i, 1)
+              if (c == "'") quoted = !quoted
+              else if (!quoted && substr(s, i, 2) == close_) return i
+            }
+            return 0
+          }
+          BEGIN {
+            open = "{" "{"
+            close_ = "}" "}"
+            ok["GITHUB_TOKEN"] = 1
+            n = split(allowed, a, " ")
+            for (i = 1; i <= n; i++) ok[a[i]] = 1
+          }
+          FNR == 1 { inexpr = 0; fname = FILENAME; sub(/^\.\//, "", fname) }
+          {
+            line = $0
+            expr = ""
+            while (line != "") {
+              if (!inexpr) {
+                p = index(line, open)
+                if (p == 0) break
+                line = substr(line, p + 2)
+                inexpr = 1
+              } else {
+                p = find_close(line)
+                if (p == 0) {
+                  expr = expr " " line
+                  line = ""
+                } else {
+                  expr = expr " " substr(line, 1, p - 1)
+                  line = substr(line, p + 2)
+                  inexpr = 0
+                }
+              }
+            }
+            if (violates(expr)) print fname ":" FNR ":" $0
+          }
+          AWK
+
+          # awk の結果は先に変数へ受ける。パイプの後ろに `|| true` を付けると、awk の
+          # 異常終了 (構文エラー・実装差) まで吸収して「違反なし」で成功してしまうため。
+          # 単独の代入なら set -e が効き、awk が非ゼロを返した時点で job が失敗する。
+          # `|| true` が吸収するのは「マーカー除外後に 1 行も残らない」場合だけにする。
+          #
+          # awk に渡すパスには ./ を前置する。awk は「名前=値」の形をした引数を、-- の
+          # 後ろでもファイルではなく変数代入として扱うため、パスに = を含む走査対象
+          # (例: k=v/action.yml) が読まれないまま検出から外れる。./ で始まる引数は
+          # 代入として解釈されない。前置した ./ は awk 側で出力時に外す。
+          raw="$(awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]/#/./}")"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
+          add_finding '許可されていない secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
+
+          # grep も awk と同じく、結果を先に変数へ受けてからマーカーを除外する。
+          # grep は 1 件も合致しないと 1 を返すので、1 だけを「違反なし」として許す。
+          # 2 以上 (走査対象を読めないなど) は job を失敗させる。
+          scan_lines() {
+            grep -HnEI -e "$1" -- "${targets[@]}" || [ "$?" -eq 1 ]
+          }
+          raw="$(scan_lines "^[[:space:]]*-?[[:space:]]*[\"']?secret[s][\"']?[[:space:]]*:[[:space:]]*inherit")"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
+          add_finding 'secrets: inherit (全 Secrets を無条件に転送するため禁止)' "$hits"
+
+          # --- 2. 従量課金 API キーを示す変数名 ---------------------------
+          # 行を識別子単位に分け、パターンに合致し、かつ allowed_secrets に無い識別子が
+          # ある行を違反とする (allowed_secrets が空なら行全体の検索と同じ結果になる)。
+          cat > "$work/key-name.awk" <<'AWK'
+          BEGIN {
+            n = split(allowed, a, " ")
+            for (i = 1; i <= n; i++) ok[a[i]] = 1
+          }
+          FNR == 1 { fname = FILENAME; sub(/^\.\//, "", fname) }
+          {
+            line = $0
+            while (match(line, /[A-Za-z0-9_]+/)) {
+              tok = substr(line, RSTART, RLENGTH)
+              line = substr(line, RSTART + RLENGTH)
+              if ((tok ~ key || tok ~ provider) && !(tok in ok)) {
+                print fname ":" FNR ":" $0
+                break
+              }
+            }
+          }
+          AWK
+
+          # パスに ./ を前置する理由は検出 1 と同じ。
+          raw="$(
+            awk -v allowed="$allowed_names" -v key="$key_pattern" -v provider="$provider_pattern" \
+              -f "$work/key-name.awk" -- "${targets[@]/#/./}"
           )"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '従量課金 API キーを示す変数名 (AGENTS.md 1.1)' "$hits"
 
           # --- 3. 課金可能な API エンドポイント ---------------------------
           host_pattern='(api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|api\.deepseek\.com|api\.mistral\.ai|api\.cohere\.(ai|com)|api\.groq\.com|api\.perplexity\.ai|api\.x\.ai|api\.together\.(xyz|ai)|openrouter\.ai|api\.tavily\.com|api\.exa\.ai|serpapi\.com|api\.search\.brave\.com|api\.firecrawl\.dev|api\.replicate\.com|(api-inference|router)\.huggingface\.co)'
-          hits="$(
-            grep -HnEI -e "$host_pattern" -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' || true
-          )"
+          raw="$(scan_lines "$host_pattern")"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '課金可能な API エンドポイントへの接続先 (AGENTS.md 1.1: OpenAI 互換エンドポイント経由も MUST NOT)' "$hits"
 
           # --- 判定 -------------------------------------------------------
@@ -154,13 +331,14 @@ jobs:
             echo '```'
             echo ""
             echo "判断基準は対象リポジトリの AGENTS.md 1 章を参照してください。"
-            echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けることで除外できます。"
+            echo "正当な例外は、対象行に \`free-policy: allow <理由>\` のコメントを付けるか、スタブの \`allowed_secrets\` に Secret 名を追加することで除外できます。"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
           echo "対応方法:"
           echo "  - 従量課金 API キー / 課金可能エンドポイントへの依存を取り除く (AGENTS.md 1 章)"
           echo "  - 正当な例外の場合は該当行に \`free-policy: allow <理由>\` のコメントを付ける"
+          echo "  - 同じ Secret を複数箇所で参照する場合はスタブの \`allowed_secrets\` に名前を追加する"
 
           if [ "${ENFORCE:-true}" = "false" ]; then
             echo "::warning::完全無料ポリシー違反の疑いを検出しました (enforce: false のため警告のみ)。"

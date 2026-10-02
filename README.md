@@ -366,13 +366,15 @@ jobs:
 
 | #   | 検出内容                                                                                 | 根拠                                        |
 | --- | ---------------------------------------------------------------------------------------- | ------------------------------------------- |
-| 1   | `GITHUB_TOKEN` 以外の `secrets.*` 参照、および `secrets: inherit`                        | 従量課金 API キーの Secrets 登録は MUST NOT |
+| 1   | 許可リストに無い `secrets.*` 参照、および `secrets: inherit`                             | 従量課金 API キーの Secrets 登録は MUST NOT |
 | 2   | 従量課金 API キーを示す変数名（`*_API_KEY` / `*_API_TOKEN` / プロバイダ名付きの鍵・URL） | 同上（`vars.*` や平文での指定も検出する）   |
 | 3   | 課金可能な LLM / 検索 API のエンドポイントホスト名                                       | OpenAI 互換エンドポイント経由も MUST NOT    |
 
-キー名のブラックリスト維持を避けるため、1 は**ホワイトリスト方式**（`GITHUB_TOKEN` 以外はすべて違反）を採る。
+キー名のブラックリスト維持を避けるため、1 は**ホワイトリスト方式**を採る。既定の許可リストは `GITHUB_TOKEN` のみで、それ以外の参照はすべて違反になる。
 
-走査対象は `.github/` 配下の YAML と composite action 定義（`action.yml` / `action.yaml`）のみ。ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの組み込み」であり、`AGENTS.md` や README がポリシー解説として鍵名を列挙しているのを誤検知しないための限定である。
+1 が見るのは**式（`${{ ... }}`）の内側に現れる `secrets` コンテキストの参照だけ**である。`run:` 内の Python 標準ライブラリ呼び出し（`secrets.token_hex(8)`）やファイル名（`.secrets.baseline`）のように、式の外にある文字列は対象にしない。複数行にまたがる式、`secrets['NAME']` の添字参照、大文字小文字の違い（`SECRETS.name`）も同じ参照として扱う。添字が動的な参照（`secrets[format(...)]`）は、どの Secret を読むか静的に決まらないため常に違反とする。
+
+走査対象は、`.github/` 配下の YAML / JSON / JSON5、リポジトリルート直下の Renovate 設定（`renovate.json` / `renovate.json5` / `.renovaterc` / `.renovaterc.json` / `.renovaterc.json5`）、composite action 定義（`action.yml` / `action.yaml`）のみ。ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの組み込み」であり、`AGENTS.md` や README がポリシー解説として鍵名を列挙しているのを誤検知しないための限定である。
 
 ### 検出しないもの（レビュー運用でカバー）
 
@@ -386,6 +388,8 @@ jobs:
 
 - `enforce`（boolean、既定 `true`）を `false` にすると、違反を検出しても job は成功し `::warning::` のみを出す。新規導入時は `false` で誤検知を観察し、問題がなければ `true`（既定）へ切り替える
 - 正当な例外は、対象行に `free-policy: allow <理由>` を含むコメントを書くことで除外する。別ファイルの allowlist ではなく行内マーカー方式にしているのは、例外の追加が必ず差分レビューに現れるようにするため
+- 同じ Secret を何度も参照するリポジトリでは、`allowed_secrets`（string、既定は空）に許可する名前をカンマ・空白・改行区切りで渡す。指定した名前は検出 1（`secrets.*` 参照）と検出 2（鍵変数名）の両方で除外される。こちらもスタブの差分に現れるため、レビューで可視化される点は行内マーカーと変わらない
+- `allowed_secrets` に、検出 2 の鍵名パターンに合致する名前（`OPENAI_API_KEY` などのプロバイダ名付きの名前、`GOOGLE_API_KEY` のような `*_API_KEY` / `*_API_TOKEN` / `*_SECRET_KEY` 形式の名前）を指定すると、設定エラーとして job が失敗する（`enforce: false` でも失敗する）。`AGENTS.md` 1.1 が名指しで MUST NOT としている鍵と未知のプロバイダの鍵を、リポジトリ単位の一括許可で通さないため。例外は名前に `GITHUB` を単語として含み、プロバイダ名付きパターンに合致しないもの（`REVIEWDOG_GITHUB_API_TOKEN` など）で、GitHub 自身の資格情報は課金を伴わないため許可する
 
 ```yaml
 jobs:
@@ -393,6 +397,18 @@ jobs:
     uses: genzouw/ci-workflows/.github/workflows/free-policy.yml@<full-commit-SHA> # vX.Y.Z
     with:
       enforce: false # 誤検知観察中。観察後に削除して既定の true に戻す
+```
+
+```yaml
+jobs:
+  free-policy:
+    uses: genzouw/ci-workflows/.github/workflows/free-policy.yml@<full-commit-SHA> # vX.Y.Z
+    with:
+      # デプロイ用の OIDC ロールと、reviewdog が GITHUB_TOKEN を受け取る環境変数名。
+      # どちらも課金を伴わないため許可する。
+      allowed_secrets: |
+        AWS_ROLE_ARN
+        REVIEWDOG_GITHUB_API_TOKEN
 ```
 
 ## `fallow.yml`（TS/JS の変更ファイル品質ゲート）
