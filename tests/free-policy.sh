@@ -176,7 +176,8 @@ run_scan() {
 }
 
 # 出力から検出行を「種別 パス:行」の形で取り出す。
-# 種別: ref (検出 1 の secrets 参照) / inherit / key (検出 2) / host (検出 3)
+# 種別: ref (検出 1 の secrets 参照) / inherit / key (検出 2) / host (検出 3) /
+#       unknown (上記以外の見出し。期待値には現れない)
 # 検出行には不正な UTF-8 バイトを含むものがあるため、バイト列として読む
 # (UTF-8 ロケールの BSD awk は変換に失敗して異常終了する)。
 hits() {
@@ -185,6 +186,9 @@ hits() {
     /^■ secrets: inherit/ { kind = "inherit"; next }
     /^■ .*変数名/ { kind = "key"; next }
     /^■ .*エンドポイント/ { kind = "host"; next }
+    # 上のどれにも合致しない見出しは unknown として出力し、期待値との不一致で落とす。
+    # 捨てると、検出を足してケースを足し忘れてもテストが通る。
+    /^■ / { kind = "unknown"; next }
     /^$/ { kind = ""; next }
     kind != "" && match($0, /^[^:]+:[0-9]+:/) { print kind " " substr($0, 1, RLENGTH - 1) }
   ' | LC_ALL=C sort
