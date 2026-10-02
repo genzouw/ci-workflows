@@ -376,6 +376,19 @@ jobs:
 
 走査対象は、`.github/` 配下の YAML / JSON / JSON5、リポジトリルート直下の Renovate 設定（`renovate.json` / `renovate.json5` / `.renovaterc` / `.renovaterc.json` / `.renovaterc.json5`）、composite action 定義（`action.yml` / `action.yaml`）のみ。ポリシーが禁止しているのは「CI/CD および自動化ワークフローへの組み込み」であり、`AGENTS.md` や README がポリシー解説として鍵名を列挙しているのを誤検知しないための限定である。
 
+### 検出ロジックのテスト
+
+検出ロジックは `tests/free-policy.sh` で検証する。`free-policy.yml` の `run:` を `yq` で取り出し、実行時に生成したフィクスチャ（一時ディレクトリの git リポジトリ）に対して実行して、終了コードと検出行を期待値と突き合わせる。`free-policy.yml` 自身のセルフスキャンは inputs が常に空で、違反を検出する経路と `allowed_secrets` を渡した経路を通らないため、別に用意している。
+
+```bash
+bash tests/free-policy.sh
+```
+
+- bash 4.4 以上と `yq`（mikefarah 版）が必要
+- PATH にある awk 実装（`awk` / `gawk` / `mawk`）のすべてで実行する。`FREE_POLICY_TEST_AWKS="gawk mawk"` のように指定すると、その実装だけで実行する
+- CI では本リポジトリ専用の `free-policy-test.yml` が、`free-policy.yml` かテストを変更したときに実行する
+- 検出ロジックを変更するときは、変更内容に対応するケースをフィクスチャに足す。フィクスチャをファイルとして `.github/` 配下や `*/action.yml` に置くとセルフスキャンが違反として検出するため、スクリプト内で生成する
+
 ### 検出しないもの（レビュー運用でカバー）
 
 - 有料プラン / 有料トライアル / クレジットカード登録を要する SaaS の導入
@@ -661,7 +674,7 @@ jobs:
 
 **main へマージすると `auto-tag.yml` がタグを自動で作成する。** 手動でタグを打つ必要はない。呼び出し側は Renovate がタグに対応する SHA へ自動更新する。
 
-`auto-tag.yml` は本リポジトリ自身のリリース運用専用であり、**reusable workflow ではない**（他リポジトリへ配布しない）。`.github/workflows/` 配下で `workflow_call` を持たない唯一のファイルである。
+`auto-tag.yml` は本リポジトリ自身のリリース運用専用であり、**reusable workflow ではない**（他リポジトリへ配布しない）。`.github/workflows/` 配下で `workflow_call` を持たないのは、`auto-tag.yml` と、検出ロジックのテスト専用の `free-policy-test.yml` の 2 つだけである。
 
 ### 採番の規則
 
@@ -678,7 +691,7 @@ jobs:
 
 ### タグを打たない条件
 
-- 直近タグ以降に **`.github/workflows/` と `.github/actions/` のいずれも変更されていない**場合はスキップする。呼び出し側が参照するのはこの 2 つだけなので、README だけの更新でタグ番号を消費しない。`auto-tag.yml` 自身（他リポジトリへ配布しない）の変更もこの判定から除外しており、`auto-tag.yml` だけを直した変更ではタグ番号を消費しない
+- 直近タグ以降に **`.github/workflows/` と `.github/actions/` のいずれも変更されていない**場合はスキップする。呼び出し側が参照するのはこの 2 つだけなので、README だけの更新でタグ番号を消費しない。`auto-tag.yml` と `free-policy-test.yml`（どちらも他リポジトリへ配布しない）の変更もこの判定から除外しており、この 2 つだけを直した変更ではタグ番号を消費しない
 
 算出した番号のタグが checkout 後に他プロセス（手動での先行タグ付け等）から作成されていた場合は、タグ作成 API 呼び出しが 422 で失敗し job が赤くなる。黙ってスキップする経路は設けていない（ローカル ref だけを見る事前ガードは実際の衝突を検出できないため）。
 

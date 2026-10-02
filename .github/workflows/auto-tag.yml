@@ -4,7 +4,8 @@ name: auto-tag
 #
 # 【重要】本ワークフローは reusable workflow ではない。本リポジトリ自身の
 # リリース運用専用であり、他リポジトリへスタブを配布するものではない。
-# (.github/workflows/ 配下の他のファイルはすべて workflow_call を持つ reusable)
+# (.github/workflows/ 配下で workflow_call を持たないのは本ファイルと、
+# 検出ロジックのテスト専用の free-policy-test.yml だけ。他はすべて reusable)
 #
 # なぜ必要か:
 #   呼び出し側リポジトリのスタブは `uses: .../<workflow>.yml@<SHA> # vX.Y.Z` の形で
@@ -100,10 +101,12 @@ jobs:
           # CI 定義に変更が無いなら、タグを打つ意味がない (呼び出し側が参照するのは
           # ワークフローと composite action だけ)。README だけの更新でタグ番号を
           # 消費しないようにする。既存タグが無い初回リリースでも、空のツリーを
-          # 起点に同じ判定を行う。auto-tag.yml 自身は他リポジトリへ配布しない
-          # (workflow_call を持たない) ため、これだけの変更でもタグ番号を消費
-          # しないよう除外する。
-          changed="$(git diff --name-only "${diff_base}" HEAD -- '.github/workflows' '.github/actions' ':(exclude).github/workflows/auto-tag.yml')"
+          # 起点に同じ判定を行う。auto-tag.yml と free-policy-test.yml は他リポジトリへ
+          # 配布しない (workflow_call を持たない) ため、これらだけの変更ではタグ番号を
+          # 消費しないよう除外する。配布物が変わらないタグを打つと、Renovate が
+          # 全呼び出し元へ中身の変わらない SHA 追従の PR を出すため。
+          # workflow_call を持たないワークフローを足したら、ここにも足す。
+          changed="$(git diff --name-only "${diff_base}" HEAD -- '.github/workflows' '.github/actions' ':(exclude).github/workflows/auto-tag.yml' ':(exclude).github/workflows/free-policy-test.yml')"
           if [ -z "${changed}" ]; then
             echo "${latest:-<初回>} 以降、CI 定義に変更がありません。タグ付けをスキップします。"
             exit 0
