@@ -29,7 +29,9 @@ on:
       allowed_secrets:
         description: >-
           GITHUB_TOKEN に加えて参照を許可する Secret 名・鍵変数名 (カンマ / 空白 / 改行区切り)。
-          既定は空 (GITHUB_TOKEN のみ許可)。LLM / 検索 API のプロバイダ名を含む名前は指定できない。
+          既定は空 (GITHUB_TOKEN のみ許可)。鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・
+          プロバイダ名付き) に合致する名前は、名前に GITHUB を単語として含むものを除き指定できない
+          (該当行の `free-policy: allow <理由>` で除外する)。
         type: string
         required: false
         default: ""
@@ -136,7 +138,7 @@ jobs:
             fi
             if [[ "$name" =~ $provider_pattern ]] \
               || { [[ "$name" =~ $key_pattern ]] && ! [[ "$name" =~ $github_pattern ]]; }; then
-              echo "::error::allowed_secrets に LLM / 検索 API の鍵は指定できません (AGENTS.md 1.1: MUST NOT): ${name}"
+              echo "::error::allowed_secrets に鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・プロバイダ名付き) に合致する名前は指定できません。課金を伴わない正当な参照は該当行に 'free-policy: allow <理由>' を付けてください: ${name}"
               exit 1
             fi
           done
