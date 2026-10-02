@@ -159,6 +159,16 @@ expect_skip() {
   fi
 }
 
+# expect_fail <説明>: タグを作らず、スキップもせず、失敗で終わること。
+expect_fail() {
+  run_auto_tag
+  if [ "$status" -ne 0 ] && [ ! -s "$gh_log" ] && [[ "$out" != *"タグ付けをスキップします"* ]]; then
+    report ok "$1"
+  else
+    report ng "$1" "期待: タグを作らずに失敗"
+  fi
+}
+
 # --- タグを打たない変更 ---
 new_repo
 touch_file README.md
@@ -278,6 +288,27 @@ git -C "$repo" tag -d v1.0.0 > /dev/null
 git -C "$repo" rm -q -r .github/workflows/lint.yml .github/actions
 commit "chore: 配布物を削除"
 expect_skip "初回リリース: 配布しないワークフローしか無ければスキップする"
+
+# --- 失敗で終わるべき経路 ---
+# git diff が失敗したとき、差分なしと見なして「スキップ」で正常終了しないこと
+# (タグを打たない側へ無言で倒れる)。git のスタブは diff だけを失敗させ、ほかは本物へ渡す。
+# フィクスチャを作る git と HEAD_SHA の算出は run_auto_tag の env の外で動くため、
+# スタブの影響を受けない。
+new_repo
+touch_file .github/workflows/lint.yml
+commit "fix: reusable workflow を修正"
+real_git="$(command -v git)"
+cat > "$tmp/stub/git" <<EOF
+#!/bin/sh
+if [ "\$1" = diff ]; then
+  echo "fatal: stub" >&2
+  exit 128
+fi
+exec "$real_git" "\$@"
+EOF
+chmod +x "$tmp/stub/git"
+expect_fail "git diff が失敗したらスキップせずに失敗する"
+rm "$tmp/stub/git"
 
 echo ""
 if [ "$total" -eq 0 ]; then
