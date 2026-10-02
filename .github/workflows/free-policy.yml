@@ -192,6 +192,11 @@ jobs:
                 } else {
                   return 1 # 添字が動的で、どの Secret を読むか静的に決まらない
                 }
+              } else if (rest == "" || substr(rest, 1, 1) !~ /[A-Z0-9_-]/) {
+                # secrets コンテキスト全体の参照 (toJSON に丸ごと渡すなど)。全 Secret を
+                # 1 つの値として渡すため、どの Secret を読むか静的に決まらない。
+                # 行末で切れた参照 (次行が .NAME で続く書き方) もここで違反になる。
+                return 1
               }
             }
             return 0
