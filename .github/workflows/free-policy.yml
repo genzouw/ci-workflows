@@ -234,10 +234,12 @@ jobs:
           }
           AWK
 
-          hits="$(
-            awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' || true
-          )"
+          # awk の結果は先に変数へ受ける。パイプの後ろに `|| true` を付けると、awk の
+          # 異常終了 (構文エラー・実装差) まで吸収して「違反なし」で成功してしまうため。
+          # 単独の代入なら set -e が効き、awk が非ゼロを返した時点で job が失敗する。
+          # `|| true` が吸収するのは「マーカー除外後に 1 行も残らない」場合だけにする。
+          raw="$(awk -v allowed="$allowed_names" -f "$work/secrets-ref.awk" -- "${targets[@]}")"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '許可されていない secrets 参照 (AGENTS.md 1.1: 従量課金 API キーの Secrets 登録は MUST NOT)' "$hits"
 
           hits="$(
@@ -267,11 +269,11 @@ jobs:
           }
           AWK
 
-          hits="$(
+          raw="$(
             awk -v allowed="$allowed_names" -v key="$key_pattern" -v provider="$provider_pattern" \
-              -f "$work/key-name.awk" -- "${targets[@]}" \
-              | grep -v 'free-policy: allow' || true
+              -f "$work/key-name.awk" -- "${targets[@]}"
           )"
+          hits="$(printf '%s\n' "$raw" | grep -v 'free-policy: allow' | sed '/^$/d' || true)"
           add_finding '従量課金 API キーを示す変数名 (AGENTS.md 1.1)' "$hits"
 
           # --- 3. 課金可能な API エンドポイント ---------------------------
