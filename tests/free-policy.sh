@@ -170,6 +170,23 @@ jobs:
 EOF
 init_repo "$excludable"
 
+# プロバイダ名の左側の境界を確かめるリポジトリ (検出 2 と allowed_secrets の照合)。
+#   4 行目: 検出 1 だけに出る (allowed_secrets に指定すれば外れる)
+#   6 行目: 検出されない (プロバイダ名を名前の途中に含むだけの鍵名。ALEXA の EXA・MYXAI の XAI)
+#   7 行目: 検出 2 に出る (接頭辞の後ろに `_` を挟んだプロバイダ名付きの鍵名)
+# 行番号は下の期待値と対応しているので、行を足すときは末尾に足す。
+boundary="$tmp/boundary"
+put "$boundary" .github/workflows/ci.yml <<'EOF'
+jobs:
+  build:
+    env:
+      ALEXA: ${{ secrets.ALEXA_REFRESH_TOKEN }}
+    steps:
+      - run: echo "$ALEXA_REFRESH_TOKEN $MYXAI_URL"
+      - run: echo "$MY_HF_TOKEN"
+EOF
+init_repo "$boundary"
+
 # 違反の無いリポジトリ。
 clean="$tmp/clean"
 put "$clean" .github/workflows/ci.yml <<'EOF'
@@ -388,6 +405,20 @@ inherit .github/workflows/ci.yml:8
   expect_output "enforce: false: 警告を出す" 0 '::warning::'
   expect_summary "enforce: false: ジョブサマリに警告のみで成功したことを書く" 'enforce: false (誤検知の観察中)'
 
+  # --- プロバイダ名の左側の境界 (検出 2) ---
+  run_scan "$boundary"
+  expect_hits "境界: プロバイダ名を名前の途中に含むだけの鍵名は検出 2 に出ない" 1 '
+ref .github/workflows/ci.yml:4
+key .github/workflows/ci.yml:7
+'
+  run_scan "$boundary" ALLOWED_SECRETS=ALEXA_REFRESH_TOKEN
+  expect_hits "境界: allowed_secrets に指定した名前は検出 1 からも外れる" 1 '
+key .github/workflows/ci.yml:7
+'
+  # 接頭辞付きのプロバイダ名は、マーカーでも除外できない違反として扱う (enforce: false でも失敗)。
+  run_scan "$boundary" ALLOWED_SECRETS=ALEXA_REFRESH_TOKEN ENFORCE=false
+  expect_output "境界: 接頭辞付きのプロバイダ名は enforce: false でも失敗する" 1 '  .github/workflows/ci.yml:7:'
+
   # --- 違反なし・走査対象なし ---
   run_scan "$clean"
   expect_output "違反なし: 成功する" 0 '検出されませんでした'
@@ -398,7 +429,10 @@ inherit .github/workflows/ci.yml:8
   run_scan "$clean" ALLOWED_SECRETS=REVIEWDOG_GITHUB_API_TOKEN
   expect_output "allowed_secrets: GITHUB を単語として含む鍵名は指定できる" 0 '検出されませんでした'
   local name
-  for name in OPENAI_API_KEY VENDOR_SECRET_KEY HF_TOKEN GITHUB_OPENAI_API_KEY; do
+  run_scan "$clean" ALLOWED_SECRETS=ALEXA_REFRESH_TOKEN
+  expect_output "allowed_secrets: プロバイダ名を名前の途中に含むだけの名前は指定できる" 0 '検出されませんでした'
+  # 接頭辞の後ろに `_` を挟んだプロバイダ名は、境界があっても設定エラーのまま。
+  for name in OPENAI_API_KEY VENDOR_SECRET_KEY HF_TOKEN GITHUB_OPENAI_API_KEY MY_HF_TOKEN; do
     run_scan "$clean" ALLOWED_SECRETS="$name"
     expect_output "allowed_secrets: 鍵名パターンに合致する名前は設定エラー (${name})" 1 '鍵名パターン'
   done
