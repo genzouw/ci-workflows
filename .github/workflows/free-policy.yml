@@ -126,6 +126,16 @@ jobs:
           # 汎用パターン (未知のプロバイダも捕捉する) とプロバイダ名付きパターンの併用。
           key_pattern='[A-Z][A-Z0-9]*(_[A-Z0-9]+)*_(API_KEY|API_TOKEN|SECRET_KEY)'
           provider_pattern='(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_GENERATIVE_AI|VERTEX_AI|AZURE_OPENAI|MISTRAL|COHERE|GROQ|DEEPSEEK|PERPLEXITY|XAI|TOGETHER|OPENROUTER|HUGGINGFACE|HF|REPLICATE|TAVILY|EXA|SERPAPI|BRAVE|FIRECRAWL)_[A-Z0-9_]*(KEY|TOKEN|URL|ENDPOINT)'
+          # 識別子 (検出 2 のトークン・allowed_secrets の名前) とプロバイダ名を照合するときの
+          # パターン。プロバイダ名は識別子の先頭か `_` の直後から始まる場合だけ合致させる。
+          # 境界が無いと、短いプロバイダ名 (EXA / HF / XAI など) を名前の途中に含むだけの
+          # 無関係な鍵まで検出 2 で違反になり、allowed_secrets にも指定できなくなる。
+          # `_` を境界に含めるのは、接頭辞を足すだけで擦り抜けられないようにするため。
+          # 検出 2 と allowed_secrets の検証は必ずこの変数を使う (両者が食い違うと、
+          # allowed_secrets で許可した名前が検出 2 から外れて穴が開く)。
+          # 行内マーカーの判定 (drop_marked) は行全体を照合するため境界を
+          # `(^|[^A-Z0-9])` と書くが、識別子の単位では同じ境界になる。
+          provider_name_pattern="(^|_)${provider_pattern}"
 
           # 課金可能な LLM / 検索 API のエンドポイント (検出 3 と、行内マーカーの判定で使う)。
           host_pattern='(api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|api\.deepseek\.com|api\.mistral\.ai|api\.cohere\.(ai|com)|api\.groq\.com|api\.perplexity\.ai|api\.x\.ai|api\.together\.(xyz|ai)|openrouter\.ai|api\.tavily\.com|api\.exa\.ai|serpapi\.com|api\.search\.brave\.com|api\.firecrawl\.dev|api\.replicate\.com|(api-inference|router)\.huggingface\.co)'
@@ -141,13 +151,13 @@ jobs:
           # どちらもスタブ / ワークフローの差分に現れるため、例外の追加は必ずレビューで
           # 可視化される (別ファイルの allowlist にしないのはこのため)。
           #
-          # 検出 2 の鍵名パターン (provider_pattern / key_pattern) に合致する名前は
+          # 検出 2 の鍵名パターン (provider_name_pattern / key_pattern) に合致する名前は
           # allowed_secrets では許可しない。AGENTS.md 1.1 が名指しで MUST NOT としている
           # 鍵や未知のプロバイダ鍵を、リポジトリ単位の一括許可で通せてしまうと検査の
           # 意味がなくなるため (許可した名前は検出 2 から丸ごと外れる)。
           # 拒否の判定を検出 2 と同じパターンにしておけば、両者の食い違いで穴が開かない。
           # 例外は GitHub 自身の資格情報 (reviewdog が GitHub のトークンを受け取る変数名
-          # など、名前に GITHUB を単語として含み、provider_pattern に合致しないもの) で、
+          # など、名前に GITHUB を単語として含み、provider_name_pattern に合致しないもの) で、
           # 課金を伴わないため許可する。
           #
           # このコメントには鍵名の実例を書かない。本ワークフロー自身も走査対象で、
@@ -161,7 +171,7 @@ jobs:
               echo "::error::allowed_secrets に Secret 名として不正な値があります: ${name}"
               exit 1
             fi
-            if [[ "$name" =~ $provider_pattern ]] \
+            if [[ "$name" =~ $provider_name_pattern ]] \
               || { [[ "$name" =~ $key_pattern ]] && ! [[ "$name" =~ $github_pattern ]]; }; then
               echo "::error::allowed_secrets に鍵名パターン (*_API_KEY / *_API_TOKEN / *_SECRET_KEY・プロバイダ名付き) に合致する名前は指定できません。課金を伴わない正当な参照は該当行に 'free-policy: allow <理由>' を付けてください (プロバイダ名付きの鍵名はマーカーでも除外できません): ${name}"
               exit 1
@@ -184,11 +194,10 @@ jobs:
           # (課金を伴わないサービスの鍵を、理由を書いたうえで通すための逃げ道)。
           #
           # プロバイダ名は、識別子の先頭か `_` の直後から始まる場合だけ合致させる
-          # (左側に英数字が続く場合は合致させない)。境界が無いと、短いプロバイダ名を
-          # 名前の途中に含むだけの無関係な鍵まで除外できなくなる。そうした名前は
-          # allowed_secrets でも拒否されるため、通す手段がマーカーしか無い。
-          # `_` を境界に含めているのは、プロバイダ名の前に接頭辞を足すだけで
-          # 擦り抜けられないようにするため。
+          # (左側に英数字が続く場合は合致させない)。境界の考え方は provider_name_pattern と
+          # 同じで、検出 2 で違反にならない名前がマーカーでは除外できない、という食い違いを
+          # 作らないため。行全体を照合するので、識別子の区切りになる `_` 以外の記号・空白も
+          # 境界として扱う (`(^|[^A-Z0-9])`)。
           #
           # 引数に tagged を渡すと、各行を「種別<TAB>検出行」として読む (検出 1 の出力)。
           # 種別が dynamic の行は、マーカーがあっても除外しない。動的な添字と secrets
@@ -387,7 +396,7 @@ jobs:
 
           # パスに ./ を前置する理由は検出 1 と同じ。
           raw="$(
-            awk -v allowed="$allowed_names" -v key="$key_pattern" -v provider="$provider_pattern" \
+            awk -v allowed="$allowed_names" -v key="$key_pattern" -v provider="$provider_name_pattern" \
               -f "$work/key-name.awk" -- "${targets[@]/#/./}"
           )"
           hits="$(printf '%s\n' "$raw" | drop_marked | sed '/^$/d')"
