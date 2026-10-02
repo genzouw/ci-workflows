@@ -164,10 +164,12 @@ failed=0
 run_scan() {
   local dir="$1"
   shift
+  # run: は mktemp -d した作業ディレクトリを消さない (ランナーは使い捨てのため)。
+  # TMPDIR を $tmp に向けて、このスクリプトの trap でまとめて消す。
   set +e
   out="$(
     cd "$dir" && env -u ENFORCE -u ALLOWED_SECRETS \
-      PATH="$run_path" GITHUB_STEP_SUMMARY="$tmp/summary" "$@" bash "$scan" 2>&1
+      PATH="$run_path" TMPDIR="$tmp" GITHUB_STEP_SUMMARY="$tmp/summary" "$@" bash "$scan" 2>&1
   )"
   status=$?
   set -e
