@@ -135,8 +135,14 @@ jobs:
           # --no-renames: リネームを「旧パスの削除 + 新パスの追加」として列挙させる。
           # 既定のリネーム検出では新パスしか出ないため、reusable workflow をリネームして
           # 同時に workflow_call を外した変更が、新パスの判定だけで除外されてしまう。
+          #
+          # 差分の列挙は while ループへのプロセス置換ではなくコマンド置換で受ける。
+          # プロセス置換だと git diff の失敗が set -e に伝わらず、changed が空のまま
+          # 「変更なし」として正常終了し、タグを打たない側へ無言で倒れるため。
+          files="$(git diff --name-only --no-renames "${diff_base}" HEAD -- '.github/workflows' '.github/actions')"
           changed=""
           while IFS= read -r path; do
+            [ -n "${path}" ] || continue
             case "${path}" in
               .github/workflows/*.yml | .github/workflows/*.yaml)
                 before="$(reusable_at "${diff_base}" "${path}")"
@@ -150,7 +156,7 @@ jobs:
                 ;;
             esac
             changed+="${path}"$'\n'
-          done < <(git diff --name-only --no-renames "${diff_base}" HEAD -- '.github/workflows' '.github/actions')
+          done <<< "${files}"
           changed="${changed%$'\n'}"
           if [ -z "${changed}" ]; then
             echo "${latest:-<初回>} 以降、CI 定義に変更がありません。タグ付けをスキップします。"
