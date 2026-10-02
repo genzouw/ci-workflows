@@ -233,9 +233,12 @@ expect_output() {
 
 # expect_no_chapter <説明>: ログとジョブサマリが AGENTS.md の章番号を案内していないこと。
 # 章番号は呼び出し元のリポジトリごとに異なるため、固定の番号を出すと誤った章へ誘導する。
+# 「AGENTS.md 1.1」のように数字が直後に続く形と、「AGENTS.md の 1 章」のように
+# 同じ行の後ろに「<数字> 章」が続く形を分けて書く。間の文字数を {0,3} のように数えると、
+# LC_ALL=C ではバイト数になり、助詞を挟む形の検出が grep の実装 (BSD / GNU) で変わる。
 expect_no_chapter() {
   local found
-  found="$(printf '%s\n' "$out" | cat - "$tmp/summary" | LC_ALL=C grep -nE 'AGENTS\.md[^0-9]{0,3}[0-9]' || true)"
+  found="$(printf '%s\n' "$out" | cat - "$tmp/summary" | LC_ALL=C grep -nE 'AGENTS\.md([^0-9]*[0-9]+ *章| *[0-9])' || true)"
   if [ -s "$tmp/summary" ] && [ -z "$found" ]; then
     report ok "$1"
   else
