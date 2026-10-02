@@ -142,6 +142,15 @@ jobs:
       WHOLE: ${{ toJSON(secrets) }} # free-policy: allow テスト用の例外
       MIXED: ${{ secrets.UNLISTED || secrets[matrix.name] }} # free-policy: allow テスト用の例外
 EOF
+# ファイル名がプロバイダ名付きの鍵名パターンに合致するファイル (HF_TOKEN_SYNC.YML)。
+# マーカーの判定は行の内容だけを見るため、プロバイダ名を含まない鍵名の行は
+# このファイルでも除外される (期待値に現れない)。
+put "$violations" .github/workflows/hf_token_sync.yml <<'EOF'
+jobs:
+  deploy:
+    env:
+      CF: ${{ secrets.CLOUDFLARE_API_TOKEN }} # free-policy: allow テスト用の例外
+EOF
 init_repo "$violations"
 
 # 違反の無いリポジトリ。

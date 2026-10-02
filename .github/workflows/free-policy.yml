@@ -191,6 +191,10 @@ jobs:
           #
           # Secret 名とホスト名は大文字小文字を区別しないため、行を大文字 / 小文字に
           # 揃えてから照合する (小文字で書いた Secret 名で擦り抜けられないようにする)。
+          # 照合するのは行の内容だけで、検出行の先頭の「パス:行番号:」は外す。パスまで
+          # 照合すると、ファイル名がプロバイダ名付きのパターンに合致するファイル
+          # (hf_token_sync.yml など) では、行の内容に関係なくマーカーが 1 行も効かなくなる。
+          # パスに `:` を含む場合は前置を外せず、パスも照合の対象に残る (除外が減る側)。
           # パターンは -v ではなく環境変数で渡す。-v はバックスラッシュをエスケープとして
           # 解釈するため、host_pattern の `\.` が崩れる。
           # awk が異常終了した場合は、呼び出し側の代入で set -e が効いて job が失敗する。
@@ -202,7 +206,8 @@ jobs:
                 $0 = substr($0, tab + 1)
                 if (kind == "dynamic") { print; next }
               }
-              index($0, "free-policy: allow") && toupper($0) !~ ENVIRON["PROVIDER"] && tolower($0) !~ ENVIRON["HOST"] { next }
+              { body = $0; sub(/^[^:]*:[0-9]+:/, "", body) }
+              index(body, "free-policy: allow") && toupper(body) !~ ENVIRON["PROVIDER"] && tolower(body) !~ ENVIRON["HOST"] { next }
               { print }
             '
           }
