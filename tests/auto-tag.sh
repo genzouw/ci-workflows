@@ -169,6 +169,24 @@ expect_fail() {
   fi
 }
 
+# expect_output <説明> <文字列>: 直前の実行の出力にその文字列を含むこと。
+expect_output() {
+  if [[ "$out" == *"$2"* ]]; then
+    report ok "$1"
+  else
+    report ng "$1" "期待: 出力に「$2」を含む"
+  fi
+}
+
+# expect_no_output <説明> <文字列>: 直前の実行の出力にその文字列を含まないこと。
+expect_no_output() {
+  if [[ "$out" != *"$2"* ]]; then
+    report ok "$1"
+  else
+    report ng "$1" "期待: 出力に「$2」を含まない"
+  fi
+}
+
 # --- タグを打たない変更 ---
 new_repo
 touch_file README.md
@@ -200,6 +218,7 @@ new_repo
 touch_file .github/workflows/lint.yml
 commit "fix: reusable workflow を修正"
 expect_tag "reusable workflow の変更ならタグを打つ (fix は patch)" v1.0.1
+expect_no_output "判定できたワークフローには警告を出さない" "::warning::workflow_call"
 
 new_repo
 touch_file .github/workflows/lint.yml
@@ -270,6 +289,8 @@ jobs: {}
 EOF
 commit "fix: YAML として読めないワークフローを追加"
 expect_tag "YAML として読めないワークフローは配布物として扱い、タグを打つ" v1.0.1
+expect_output "YAML として読めないワークフローは警告を出す" \
+  "::warning::workflow_call の有無を判定できませんでした (absent -> unknown)。配布物として扱います: .github/workflows/broken.yml"
 
 new_repo
 put .github/workflows/notes.txt <<'EOF'

@@ -148,6 +148,12 @@ jobs:
                 before="$(reusable_at "${diff_base}" "${path}")"
                 after="$(reusable_at HEAD "${path}")"
                 case "${before}:${after}" in
+                  *unknown*)
+                    # 打つ側に倒す方針は変えず、判定できなかった事実だけを残す。
+                    # ランナー同梱の yq が式を解釈できなくなると全ワークフローが
+                    # unknown になり、job は緑のまま配布物の変わらないタグを打ち続ける。
+                    echo "::warning::workflow_call の有無を判定できませんでした (${before} -> ${after})。配布物として扱います: ${path}"
+                    ;;
                   absent:false | false:false | false:absent)
                     echo "配布しないワークフローのため判定から除外: ${path}"
                     continue
