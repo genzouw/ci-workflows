@@ -356,4 +356,10 @@ done
 
 echo ""
 echo "${total} 件中 ${failed} 件失敗 (awk 実装: ${awks[*]})"
+# awk 実装が 1 つも選ばれないと 1 件も実行しないまま failed が 0 になる。
+# 何も検証していない実行を成功にしない。
+if [ "$total" -eq 0 ]; then
+  echo "テストを 1 件も実行していません (awk 実装が見つかりません)" >&2
+  exit 2
+fi
 [ "$failed" -eq 0 ]
