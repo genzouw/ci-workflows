@@ -60,6 +60,21 @@ composite action は `.github/workflows/**` の外にあるため、ワークフ
 
 `run:` からの抽出時に付与する行番号は元の `action.yml` の行番号と一致するため、報告された位置をそのまま該当行として読める。`shell: python` / `pwsh` などのステップは shellcheck の対象から除外される。
 
+### shellcheck の版
+
+`shellcheck.yml` はランナー同梱の shellcheck を使わず、公式リリースのバイナリを SHA256 検証つきで取得して使う。同梱版は版が固定されず、呼び出し側の pre-commit フックと版がずれると新しい検査をすり抜けるため。
+
+既定の版と SHA256 は `shellcheck.yml` の「Install shellcheck」ステップの `env` が持つ（README に版のリテラルは書かない）。SHA256 を直書きしているため Renovate の更新対象外で、更新は手動で行う。呼び出し側で版を変える場合は、`shellcheck_version` と `shellcheck_sha256` を組で指定する（片方だけの指定はエラーにする）。
+
+```yaml
+jobs:
+  shellcheck:
+    uses: genzouw/ci-workflows/.github/workflows/shellcheck.yml@<sha>
+    with:
+      shellcheck_version: '<版>'
+      shellcheck_sha256: '<shellcheck-v<版>.linux.x86_64.tar.xz の SHA256>'
+```
+
 ### 呼び出し側スタブの `paths` について
 
 reusable workflow 側の `push` / `pull_request` の `paths` は**本リポジトリのセルフテスト用**であり、呼び出し側には効かない。composite action を持つリポジトリでは、スタブ側の `paths` にも `.github/actions/**` を追加すること（追加しないと composite action だけを変更したコミットで lint が起動しない）。
