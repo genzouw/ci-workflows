@@ -82,6 +82,7 @@ jobs:
 
           tarball="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
           curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
             --retry 3 --retry-all-errors --retry-delay 2 \
             --connect-timeout 10 --max-time 120 \
             -o "$tarball" \
