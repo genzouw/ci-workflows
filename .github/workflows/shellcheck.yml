@@ -3,6 +3,17 @@ name: shellcheck
 on:
   # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
   workflow_call:
+    inputs:
+      shellcheck_version:
+        description: 'インストールする shellcheck のバージョン (先頭の v は付けない)。上書きする場合は shellcheck_sha256 と組で指定する。省略時は 0.11.0'
+        type: string
+        required: false
+        default: ''
+      shellcheck_sha256:
+        description: 'shellcheck-v<版>.linux.x86_64.tar.xz の SHA256。shellcheck_version と組で指定する'
+        type: string
+        required: false
+        default: ''
   push:
     branches: [main, master]
     paths:
@@ -29,10 +40,65 @@ jobs:
         with:
           persist-credentials: false
 
+      # ランナー同梱の shellcheck (ubuntu-24.04 では 0.9.0) は版が固定されず、
+      # 呼び出し元の pre-commit フックと版がずれて新しい検査をすり抜けるため、
+      # 公式リリースのバイナリを SHA256 検証つきで取得して使う (genzouw/ci-workflows#59)。
+      #
+      # setup-gitleaks のような composite action に切り出さずインラインで持つのは、
+      # workflow_call で呼ばれた際の `uses: ./...` は呼び出し元リポジトリを指し、
+      # 本リポジトリの action を参照するには自身のコミット SHA が必要になるため。
+      #
+      # 既定値を inputs の default ではなくここに置くのは、push / pull_request で
+      # 直接実行されたときは inputs が空になり、default が効かないため。
+      - name: Install shellcheck
+        working-directory: ${{ runner.temp }}
+        env:
+          SHELLCHECK_VERSION: ${{ inputs.shellcheck_version || '0.11.0' }}
+          SHELLCHECK_SHA256: ${{ inputs.shellcheck_sha256 || '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198' }}
+          VERSION_OVERRIDDEN: ${{ inputs.shellcheck_version != '' }}
+          SHA256_OVERRIDDEN: ${{ inputs.shellcheck_sha256 != '' }}
+        run: |
+          set -euo pipefail
+
+          # 片方だけ上書きすると、既定値と組み合わさってチェックサム検証で落ちる。
+          # 原因が分かりにくいため、ここで先に失敗させる。
+          if [ "$VERSION_OVERRIDDEN" != "$SHA256_OVERRIDDEN" ]; then
+            echo "::error::shellcheck_version と shellcheck_sha256 は組で指定してください"
+            exit 1
+          fi
+          if ! [[ "$SHELLCHECK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::shellcheck_version の形式が不正です: $SHELLCHECK_VERSION"
+            exit 1
+          fi
+          if ! [[ "$SHELLCHECK_SHA256" =~ ^[a-fA-F0-9]{64}$ ]]; then
+            echo "::error::shellcheck_sha256 の形式が不正です"
+            exit 1
+          fi
+          # SHA256 は x86_64 版のものしか受け取らないため、他のアーキテクチャでは黙って進まず落とす。
+          if [ "$(uname -m)" != x86_64 ]; then
+            echo "::error::Unsupported architecture: $(uname -m)"
+            exit 1
+          fi
+
+          tarball="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 10 --max-time 120 \
+            -o "$tarball" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${tarball}"
+          echo "${SHELLCHECK_SHA256}  ${tarball}" | sha256sum -c -
+
+          mkdir -p shellcheck-bin
+          tar -xJf "$tarball" -C shellcheck-bin --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          rm -f "$tarball"
+          # ランナー同梱版より優先されるよう PATH の先頭に追加する。
+          echo "${RUNNER_TEMP}/shellcheck-bin" >>"$GITHUB_PATH"
+
       - name: Run shellcheck
         run: |
           set -euo pipefail
-          # ランナー同梱の shellcheck を使用する（バージョンはログで確認できるよう出力）。
+          # 直前のステップで入れた shellcheck を使う。取り違えに気づけるよう版を出力する。
+          command -v shellcheck
           shellcheck --version
           # リポジトリ内の全シェルスクリプトを対象に lint する。
           # サードパーティ由来の vendor / node_modules 配下は対象外。
