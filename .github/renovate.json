@@ -87,6 +87,22 @@
     },
     {
       "description": [
+        "renovate-config-validator.yml の Node.js は、検証対象の renovate の engines (44 系は node ^24.11.0) に合わせている。",
+        "engines が次の major を含む renovate へ上げるまで、node の major 更新を止める。"
+      ],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepNames": [
+        "node"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": [
         "GitHub Actions の更新は 1 PR にまとめる。",
         "本リポジトリは reusable workflow 群で、同じ Action を複数ファイルで参照しているため、",
         "まとめないと同一バージョンの更新が複数 PR に分割される。"
