@@ -34,7 +34,7 @@ jobs:
         # 絶対パス + full-commit-SHA が必要 (README「提供 composite action」参照)。
         # SHA は本リポジトリに action.yml を追加したコミットを指しており、
         # action.yml を変更する際は同じ PR 内でこの SHA も更新すること。
-        uses: genzouw/ci-workflows/.github/actions/setup-gitleaks@90aa55963a98d64ee85f786ff4884dd6fb7b531e # v1.5.37 予定 (マージ後にタグ付け)
+        uses: genzouw/ci-workflows/.github/actions/setup-gitleaks@1c76655fad03bf6399668886f5586587f548b619 # v1.5.38 予定 (マージ後にタグ付け)
 
       - name: Run gitleaks
         run: |
