@@ -3,6 +3,14 @@ name: markdownlint
 on:
   # 他リポジトリの薄いスタブから uses: で呼び出す (トリガー定義はスタブ側)。
   workflow_call:
+    inputs:
+      fail:
+        # lychee.yml の fail と同じ名前・型にそろえる。既定値だけは逆で、
+        # 既存の呼び出し元 (違反の残るリポジトリを含む) の挙動を変えないため false にする。
+        description: "違反の検出時にジョブを失敗させるか。false なら continue-on-error で実行全体を成功扱いにする (既存ドキュメントの違反を片付けるまでの猶予用)。"
+        type: boolean
+        required: false
+        default: false
   push:
     branches: [main, master]
     paths:
@@ -23,9 +31,11 @@ jobs:
   markdownlint:
     name: markdownlint-cli2
     runs-on: ubuntu-latest
-    # 既存ドキュメントの違反を片付けるまでは赤検知にしない。
-    # 整備完了後に continue-on-error を外して赤検知に切り替える。
-    continue-on-error: true
+    # 既定では赤検知にしない。違反を片付けた呼び出し元は fail: true で赤検知に切り替える。
+    # workflow_call 以外 (本リポジトリのセルフテスト) では inputs が空になり、
+    # !inputs.fail は true になるため、従来どおり continue-on-error が効く。
+    # なお continue-on-error が効くのは実行全体の結論だけで、ジョブのチェックは失敗のまま表示される。
+    continue-on-error: ${{ !inputs.fail }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
