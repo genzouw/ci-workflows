@@ -229,6 +229,28 @@ SHA ピン留めを通過したあとに残る次の 2 つの穴を、`pinact.ym
 | 2      | 自動修正不可（アノテーションと SHA の不一致、または cooldown 未経過）            | アノテーション不一致なら `pinact run` でコメントを実際の SHA に合わせる。cooldown 未経過なら指定日数が経過してから取り込む |
 | 3      | GitHub API エラー・CLI フラグの不正な組み合わせなど、pinact 自体の予期しない失敗 | ワークフローのログを確認し、pinact 自体の実行エラーに対処する                                                              |
 
+## `markdownlint.yml`（Markdown lint）
+
+設定は呼び出し元の `.markdownlint-cli2.jsonc` を使う。
+
+### 入力
+
+| 入力   | 既定    | 用途                                                        |
+| ------ | ------- | ----------------------------------------------------------- |
+| `fail` | `false` | `true` にすると、違反があればワークフロー実行全体が失敗する |
+
+既定の `false` では、ジョブに `continue-on-error` が付く。これは既存ドキュメントの違反を片付けるまでの猶予で、`lychee.yml` の `fail` と同じ考え方である。ただし既定値は `lychee.yml`（`true`）と逆にしている。`fail` を足す前から呼び出していたリポジトリには違反が残るものがあり、既定を `true` にするとそれらの main への push が一斉に失敗するためである。
+
+`continue-on-error` が成功扱いにするのは実行全体の結論だけで、PR のチェック一覧ではジョブ `markdownlint-cli2` が失敗と表示される。違反を片付けたリポジトリは、スタブで `fail: true` を指定して赤検知に切り替える。
+
+```yaml
+jobs:
+  markdownlint:
+    uses: genzouw/ci-workflows/.github/workflows/markdownlint.yml@<full-commit-SHA> # vX.Y.Z
+    with:
+      fail: true
+```
+
 ## `typos.yml`（スペルミス検出）
 
 既存の lint はいずれも**綴り**を見ていない。
